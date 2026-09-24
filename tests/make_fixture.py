@@ -55,6 +55,7 @@ def build(path: Path) -> dict:
     expected = {1: (2, 3), 2: (1, 1), 3: (1, 2)}
     for i, m in enumerate((1, 2, 3), start=2):
         d[f"B{i}"], d[f"C{i}"] = expected[m]
+    d["B5"], d["C5"] = sum(v[0] for v in expected.values()), sum(v[1] for v in expected.values())
 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)

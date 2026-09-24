@@ -23,19 +23,39 @@ def breakdown(df: pd.DataFrame, by: str | list[str], within: str | list[str] | N
     return g.sort_values(within + ["count"], ascending=[True] * len(within) + [False]).reset_index(drop=True)
 
 
-def monthly_by_label(df: pd.DataFrame) -> pd.Series:
-    """Row counts per month label number, the way the hand-made pivots count."""
+def monthly_counts(df: pd.DataFrame) -> pd.Series:
+    """Row counts per YYYY-MM (month labels are checked against dates separately)."""
     if df.empty:
         return pd.Series(dtype=int)
-    return df["month_label_num"].dropna().astype(int).value_counts().sort_index()
+    return df["month"].value_counts().sort_index()
 
 
-def dashboard_recompute(tables: dict[str, pd.DataFrame], months: list[int]) -> pd.DataFrame:
-    """Recreates the sheet's 'Approved' and 'Total' (approved + pending) columns."""
-    appr = monthly_by_label(tables.get("approved", pd.DataFrame()))
-    pend = monthly_by_label(tables.get("pending", pd.DataFrame()))
-    rows = [{"month": m, "approved": int(appr.get(m, 0)), "total": int(appr.get(m, 0) + pend.get(m, 0))} for m in months]
-    return pd.DataFrame(rows)
+def dashboard_recompute(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Recreates the sheet's 'Approved' and 'Total' (approved + pending) columns,
+    one row per month present in either tab, oldest first."""
+    appr = monthly_counts(tables.get("approved", pd.DataFrame()))
+    pend = monthly_counts(tables.get("pending", pd.DataFrame()))
+    months = sorted(set(appr.index) | set(pend.index))
+    return pd.DataFrame([{"month": m, "approved": int(appr.get(m, 0)), "total": int(appr.get(m, 0) + pend.get(m, 0))}
+                         for m in months])
+
+
+def find_block(grid: list[list], left_header: str, right_header: str) -> list[tuple]:
+    """Locates two adjacent header cells (e.g. 'Approved' | 'Total') and returns
+    the numeric pairs below them until the first blank row. The last pair is the
+    grand total row."""
+    for r, row in enumerate(grid):
+        for c, v in enumerate(row):
+            if str(v).strip() == left_header and c + 1 < len(row) and str(row[c + 1]).strip() == right_header:
+                out = []
+                for below in grid[r + 1:]:
+                    a = below[c] if c < len(below) else None
+                    b = below[c + 1] if c + 1 < len(below) else None
+                    if a in (None, "") and b in (None, ""):
+                        break
+                    out.append((a, b))
+                return out
+    raise LookupError(f"header cells {left_header!r} | {right_header!r} not found")
 
 
 def rows_for(df: pd.DataFrame, selection: dict) -> pd.DataFrame:

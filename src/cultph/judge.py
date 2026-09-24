@@ -8,7 +8,7 @@ import pandas as pd
 
 from .config import Config
 from .ingest import IngestResult
-from .metrics import breakdown, dashboard_recompute
+from .metrics import breakdown, dashboard_recompute, find_block
 
 PASS, WARN, FAIL = "pass", "warn", "fail"
 
@@ -81,24 +81,29 @@ def run_checks(res: IngestResult, cfg: Config, source=None) -> list[dict]:
         off = sums[(sums - 1).abs() > 1e-9]
         out.append(_check("segment_sums", FAIL if len(off) else PASS, f"{len(off)} product groups whose issue shares don't sum to 100%"))
 
-    # 7. Reconcile against the sheet's own Dashboard numbers
+    # 7. Reconcile against the sheet's own Dashboard numbers (month rows + grand total)
     dc = cfg.dashboard_check
     if dc and source is not None:
         try:
-            exp_appr = [int(float(v)) for v in source.cells(dc["tab"], dc["approved_range"])]
-            exp_total = [int(float(v)) for v in source.cells(dc["tab"], dc["total_range"])]
+            block = find_block(source.grid(dc["tab"]), dc["approved_header"], dc["total_header"])
+            block = [(int(float(a)), int(float(b))) for a, b in block]
         except Exception as e:  # noqa: BLE001 - surface any read problem as a failed check
-            out.append(_check("dashboard_reconcile", FAIL, f"could not read dashboard cells: {e}"))
+            out.append(_check("dashboard_reconcile", FAIL, f"could not read dashboard block: {e}"))
         else:
-            got = dashboard_recompute(res.tables, dc["months"])
+            got = dashboard_recompute(res.tables)
+            sheet_months, sheet_total = block[:-1], block[-1] if block else (0, 0)
             diffs = []
-            for (m, a, tot), ea, et in zip(got.itertuples(index=False), exp_appr, exp_total):
+            if len(sheet_months) != len(got):
+                diffs.append(f"sheet has {len(sheet_months)} month rows, raw data has {len(got)} months")
+            for (m, a, tot), (ea, et) in zip(got.itertuples(index=False), sheet_months):
                 if a != ea or tot != et:
-                    diffs.append(f"month {m}: approved {a} vs sheet {ea}, total {tot} vs sheet {et}")
-            if len(exp_appr) != len(dc["months"]):
-                diffs.append(f"expected {len(dc['months'])} months, sheet range has {len(exp_appr)}")
+                    diffs.append(f"{m}: approved {a} vs sheet {ea}, total {tot} vs sheet {et}")
+            ga, gt = int(got["approved"].sum()), int(got["total"].sum())
+            if (ga, gt) != sheet_total:
+                diffs.append(f"grand total: approved {ga} vs sheet {sheet_total[0]}, total {gt} vs sheet {sheet_total[1]}")
             out.append(_check("dashboard_reconcile", FAIL if diffs else PASS,
-                              "; ".join(diffs) or f"all {len(dc['months'])} months match (approved sum {sum(exp_appr)}, total sum {sum(exp_total)})"))
+                              "; ".join(diffs) or f"{len(got)} months ({got['month'].iloc[0]}..{got['month'].iloc[-1]}) "
+                                                  f"and grand total match (approved {ga}, total {gt})"))
     return out
 
 

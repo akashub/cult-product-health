@@ -33,13 +33,8 @@ class XlsxSource:
         headers = [str(h).strip() if h is not None else "" for h in rows[0]]
         return headers, rows[1:]
 
-    def cells(self, tab: str, cell_range: str) -> list:
-        ws = self._wb[tab]
-        out = []
-        for row in ws[cell_range]:
-            for c in row if isinstance(row, tuple) else (row,):
-                out.append(c.value)
-        return out
+    def grid(self, tab: str) -> list[list]:
+        return [list(r) for r in self._wb[tab].iter_rows(values_only=True)]
 
 
 class GSheetSource:
@@ -67,9 +62,8 @@ class GSheetSource:
         headers = [str(h).strip() for h in values[0]]
         return headers, [list(r) for r in values[1:]]
 
-    def cells(self, tab: str, cell_range: str) -> list:
-        vals = self._sh.worksheet(tab).get(cell_range, value_render_option="UNFORMATTED_VALUE")
-        return [v for row in vals for v in (row or [None])]
+    def grid(self, tab: str) -> list[list]:
+        return self._sh.worksheet(tab).get_all_values(value_render_option="UNFORMATTED_VALUE")
 
 
 def list_shared_sheets() -> list[dict]:

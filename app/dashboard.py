@@ -63,17 +63,21 @@ def filters(df: pd.DataFrame, key: str) -> pd.DataFrame:
 approved, pending, wms, tickets = load("approved"), load("pending"), load("wms"), load("tickets")
 checks = load("checks")
 
-# ---------- sidebar: pipeline health ----------
+# ---------- sidebar: pipeline health (from the latest run, even if it was blocked) ----------
 with st.sidebar:
     st.header("Pipeline health")
     runs = last_runs(1)
+    run_checks = pd.DataFrame(runs[0]["checks"]) if runs else checks
     if runs:
         r = runs[0]
         st.metric("Last sync", r["status"].upper(), help=r["at"])
-        st.caption(f"{r['at']} · {'published' if r['published'] else 'blocked'}")
-    st.dataframe(checks[["check", "status"]], hide_index=True, width="stretch")
+        if r["published"]:
+            st.caption(f"{r['at']} · published")
+        else:
+            st.error(f"{r['at']} · BLOCKED — dashboard shows the previous good snapshot")
+    st.dataframe(run_checks[["check", "status"]], hide_index=True, width="stretch")
     with st.expander("Check details"):
-        for c in checks.itertuples():
+        for c in run_checks.itertuples():
             st.markdown(f"**{c.check}** — {c.status}  \n{c.detail}")
 
 st.title("Cult Product Health")
@@ -100,9 +104,13 @@ with tab_over:
         "wms_returns": wms.groupby("product").size(),
         "product_tickets": tickets[tickets["is_product_issue"] == 1].groupby("product").size(),
     }).fillna(0).astype(int)
+    summary["sku_name_conflicts"] = approved[approved["name_conflict"] == 1].groupby("product").size()
+    summary["sku_name_conflicts"] = summary["sku_name_conflicts"].fillna(0).astype(int)
     summary["top_issue"] = top_issue["issue"]
     summary["top_issue_share"] = (top_issue["n"] / summary["approved"]).round(3)
     st.subheader("By product")
+    st.caption("sku_name_conflicts = approved rows whose model name disagrees with the SKU code "
+               "(counted under the SKU's product). See Data quality.")
     st.dataframe(summary.sort_values("approved", ascending=False), width="stretch",
                  column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
     st.subheader("Monthly trend (approved returns + exchanges)")

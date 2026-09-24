@@ -39,9 +39,8 @@ channel_prefixes:                # warehouse channel name prefix -> platform
 
 dashboard_check:                 # cells in the sheet's own pivot to reconcile against
   tab: Dashboard
-  approved_range: B2:B4
-  total_range: C2:C4
-  months: [1, 2, 3]
+  approved_header: Approved      # two adjacent header cells; month rows below, grand total last
+  total_header: Total
 
 thresholds:
   min_mapping_coverage: 0.98

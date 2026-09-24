@@ -56,9 +56,10 @@ def test_mode_normalised(run):
 
 def test_dashboard_reconciles(run):
     cfg, src, res = run
-    got = dashboard_recompute(res.tables, [1, 2, 3])
-    assert got.to_dict("records") == [
-        {"month": 1, "approved": 2, "total": 3}, {"month": 2, "approved": 1, "total": 1}, {"month": 3, "approved": 1, "total": 2}]
+    got = dashboard_recompute(res.tables)
+    assert got.to_dict("records") == [{"month": "2026-01", "approved": 2, "total": 3},
+                                      {"month": "2026-02", "approved": 1, "total": 1},
+                                      {"month": "2026-03", "approved": 1, "total": 2}]
     checks = {c["check"]: c for c in run_checks(res, cfg, src)}
     assert checks["dashboard_reconcile"]["status"] == "pass"
     assert checks["sku_name_conflict:approved"]["status"] == "warn"
@@ -75,6 +76,21 @@ def test_judge_blocks_on_dashboard_mismatch(run, tmp_path):
     wb.save(wb_path)
     checks = run_checks(res, cfg, XlsxSource(wb_path))
     assert verdict(checks) == "fail"
+
+
+def test_judge_blocks_when_sheet_has_extra_month(run, tmp_path):
+    """A new month in the sheet's pivot that the raw data lacks must not pass silently."""
+    cfg, _, res = run
+    import openpyxl
+    wb_path = tmp_path / "extra.xlsx"
+    build(wb_path)
+    wb = openpyxl.load_workbook(wb_path)
+    d = wb["Dashboard"]
+    d["B5"], d["C5"], d["B6"], d["C6"] = 5, 5, 9, 11  # extra month row + new grand total
+    wb.save(wb_path)
+    checks = {c["check"]: c for c in run_checks(res, cfg, XlsxSource(wb_path))}
+    assert checks["dashboard_reconcile"]["status"] == "fail"
+    assert "month rows" in checks["dashboard_reconcile"]["detail"]
 
 
 def test_judge_blocks_on_missing_header(tmp_path):
