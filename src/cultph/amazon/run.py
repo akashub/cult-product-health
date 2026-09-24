@@ -10,7 +10,7 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 
 from . import store
-from .checks import check_product, check_reviews, implied_gap
+from .checks import check_product, check_reviews, implied_gap, rounding_warning
 from .fetch import RAW_DIR, browser
 from .parse import BLOCK_CAPTCHA, BLOCK_SIGNIN, detect_block, parse_product, parse_review_page
 
@@ -63,11 +63,16 @@ def poll_asin(f, con, domain, asin, product, summary: RunSummary, max_pages: int
         summary.problems.append(f"{asin}: " + "; ".join(errs))
         return
     store.add_snapshot(con, asin, product, parsed)
-    new = store.upsert_reviews(con, asin, product, parsed["reviews"], "product_page")
+    pool = parsed.get("parent_asin")
+    new = store.upsert_reviews(con, asin, product, parsed["reviews"], "product_page", pool)
     summary.snapshots += 1
     summary.new_reviews += [(asin, r) for r in new]
-    store.log_run(con, asin, url, "pass",
-                  f"avg {parsed['avg_rating']} n {parsed['total_ratings']} gap {implied_gap(parsed)} new {len(new)}")
+    warn = rounding_warning(parsed)
+    store.log_run(con, asin, url, "warn" if warn else "pass",
+                  f"avg {parsed['avg_rating']} n {parsed['total_ratings']} gap {implied_gap(parsed)} new {len(new)}"
+                  + (f"; {warn}" if warn else ""))
+    if warn:
+        summary.problems.append(f"{asin}: {warn}")
     con.commit()
 
     walks = [("recent", None)] + ([(s, star) for star in STAR_FILTERS for s in ("recent", "helpful")] if backfill else [])
@@ -87,7 +92,7 @@ def poll_asin(f, con, domain, asin, product, summary: RunSummary, max_pages: int
                 store.log_run(con, asin, url, "fail", "; ".join(errs))
                 summary.problems.append(f"{asin} p{page}: " + "; ".join(errs))
                 break
-            new = store.upsert_reviews(con, asin, product, rp["reviews"], f"listing:{sort}:{star or 'all'}")
+            new = store.upsert_reviews(con, asin, product, rp["reviews"], f"listing:{sort}:{star or 'all'}", pool)
             summary.new_reviews += [(asin, r) for r in new]
             store.log_run(con, asin, url, "pass", f"{len(rp['reviews'])} reviews, {len(new)} new; {rp['filter_info'] or ''}")
             con.commit()
@@ -112,6 +117,7 @@ def poll(amazon_cfg: dict, only_asin: str | None = None, backfill: bool = False,
                     summary.problems.append(f"captcha at {e}; stopping this run to back off")
                     break
     finally:
+        store.attribute_reviews(con, amazon_cfg.get("variant_map"))
         con.commit()
         con.close()
     return summary

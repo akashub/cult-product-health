@@ -63,10 +63,29 @@ def required_share_of_five(hist_pct: dict[int, float], target: float = 4.1) -> f
     return (target - avg_other) / (5 - avg_other)
 
 
-def plan(n: int, hist_pct: dict[int, float], target: float = 4.1) -> dict:
-    a_min, a_max = avg_range(hist_pct)
+def displayed_band(shown: float) -> tuple[float, float]:
+    """A rating displayed as 4.0 (round half up to one decimal) lies in [3.95, 4.05)."""
+    return shown - 0.05, shown + 0.05 - 1e-9
+
+
+def mean_range(hist_pct: dict[int, float], shown: float | None) -> tuple[float, float, bool]:
+    """Histogram range narrowed by the displayed rating. Returns (lo, hi, consistent);
+    if the two don't overlap, falls back to the histogram range with consistent=False."""
+    h_lo, h_hi = avg_range(hist_pct)
+    if shown is None:
+        return h_lo, h_hi, True
+    d_lo, d_hi = displayed_band(shown)
+    lo, hi = max(h_lo, d_lo), min(h_hi, d_hi)
+    if lo > hi:
+        return h_lo, h_hi, False
+    return lo, hi, True
+
+
+def plan(n: int, hist_pct: dict[int, float], target: float = 4.1, shown: float | None = None) -> dict:
+    a_min, a_max, consistent = mean_range(hist_pct, shown)
     return {
         "n": n,
+        "consistent": consistent,
         "avg_range": (round(a_min, 3), round(a_max, 3)),
         "five_star_needed": (five_stars_needed(n, a_max, target), five_stars_needed(n, a_min, target)),
         "one_star_absorbable": (one_stars_absorbable(n, a_min, target), one_stars_absorbable(n, a_max, target)),

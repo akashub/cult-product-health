@@ -5,7 +5,7 @@ import pytest
 from cultph.amazon import store
 from cultph.amazon.checks import check_product, implied_gap
 from cultph.amazon.parse import detect_block, parse_product, parse_review_page
-from cultph.amazon.rating import avg_range, effective_target, five_stars_needed, one_stars_absorbable, plan, required_share_of_five
+from cultph.amazon.rating import avg_range, effective_target, mean_range, five_stars_needed, one_stars_absorbable, plan, required_share_of_five
 
 FX = Path(__file__).parent / "fixtures"
 
@@ -101,3 +101,46 @@ def test_real_saved_product_page():
 def test_effective_target():
     assert effective_target(4.1) == 4.05
     assert effective_target(4.1, "exact") == 4.1
+
+
+def test_displayed_rating_narrows_range():
+    """Real case: shows 4.0 with histogram 55/22/9/3/11 (mean 4.04-4.10). The true
+    mean must be < 4.05, so it needs a few 5-star ratings and can absorb no 1-stars."""
+    hist = {5: 55, 4: 22, 3: 9, 2: 3, 1: 11}
+    lo, hi, ok = mean_range(hist, 4.0)
+    assert ok and lo == pytest.approx(4.04) and hi < 4.05
+    p = plan(687, hist, effective_target(4.1), shown=4.0)
+    assert p["one_star_absorbable"] == (0, 0)
+    assert p["five_star_needed"][0] >= 1 and p["five_star_needed"][1] <= 8
+    # a listing shown as 4.1 whose histogram mean is 4.045-4.09 is consistent (round half up)
+    assert mean_range({5: 64, 4: 0, 3: 15, 2: 21, 1: 0}, 4.1)[2]
+
+
+def test_rounding_warning_on_mismatch():
+    from cultph.amazon.checks import rounding_warning
+    p = parse_product((FX / "amazon_product.html").read_text().replace("3.6 out of 5", "4.4 out of 5"))
+    assert rounding_warning(p) is not None
+    assert rounding_warning(parse_product((FX / "amazon_product.html").read_text())) is None
+
+
+def test_pool_attribution(tmp_path):
+    con = store.connect(tmp_path / "a.db")
+    p = parse_product((FX / "amazon_product.html").read_text())
+    for asin, prod in [("A1", "Gun A"), ("A2", "Gun B")]:  # two products share pool P1
+        store.add_snapshot(con, asin, prod, {**p, "parent_asin": "P1"})
+    store.add_snapshot(con, "A3", "Foot C", {**p, "parent_asin": "P3"})
+    store.upsert_reviews(con, "A1", "Gun A", p["reviews"], "product_page", "P1")
+    store.upsert_reviews(con, "A3", "Foot C", [{**p["reviews"][0], "review_id": "RX"}], "product_page", "P3")
+    store.attribute_reviews(con, {"P1": {"Colour: Grey": "Gun B"}})
+    got = dict((r[0], r[1:]) for r in con.execute("SELECT review_id, product, attribution FROM review"))
+    assert got["RTEST0000001"] == ("Gun B", "variant")        # variant text mapped
+    assert got["RTEST0000002"] == (None, "pool")              # shared pool, no variant -> not credited
+    assert got["RX"] == ("Foot C", "single-product pool")
+
+
+def test_ambiguous_parent_asin_is_none():
+    html = (FX / "amazon_product.html").read_text()
+    one = html + '<script>{"parentAsin":"P1"}{"parentAsin":"P1"}</script>'
+    two = html + '<script>{"parentAsin":"P1"}{"parentAsin":"P2"}</script>'
+    assert parse_product(one)["parent_asin"] == "P1"
+    assert parse_product(two)["parent_asin"] is None

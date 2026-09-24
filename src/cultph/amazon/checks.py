@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .rating import avg_range
+from .rating import avg_range, mean_range
 
 
 def check_product(parsed: dict) -> list[str]:
@@ -39,3 +39,12 @@ def implied_gap(parsed: dict) -> float:
     rounding range). Large gaps mean the page and histogram disagree."""
     a_min, a_max = avg_range(parsed["hist_pct"])
     return round(parsed["avg_rating"] - (a_min + a_max) / 2, 3)
+
+
+def rounding_warning(parsed: dict) -> str | None:
+    """The displayed rating should sit inside the histogram's rounding range.
+    If not, either the rounding assumption or the parse is off."""
+    lo, hi, ok = mean_range(parsed["hist_pct"], parsed["avg_rating"])
+    if ok:
+        return None
+    return f"displayed {parsed['avg_rating']} outside histogram mean range {lo:.3f}–{hi:.3f}"

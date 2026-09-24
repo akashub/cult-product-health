@@ -114,10 +114,10 @@ with tab_amz:
         rows = []
         for r in latest.itertuples():
             hist = {5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}
-            pl = rating_plan(int(r.total_ratings), hist, target)
+            pl = rating_plan(int(r.total_ratings), hist, target, shown=r.avg_rating)
             rows.append({
                 "asin": r.asin, "product": r.product, "displayed": r.avg_rating, "ratings": r.total_ratings,
-                "simple_avg": f"{pl['avg_range'][0]:.2f}–{pl['avg_range'][1]:.2f}",
+                "weighted mean": f"{pl['avg_range'][0]:.3f}–{pl['avg_range'][1]:.3f}" + ("" if pl["consistent"] else " ⚠"),
                 f"5★ needed to show {shown_target}": "0" if pl["five_star_needed"] == (0, 0) else f"{pl['five_star_needed'][0]}–{pl['five_star_needed'][1]}",
                 "1★ it can absorb": f"{pl['one_star_absorbable'][0]}–{pl['one_star_absorbable'][1]}",
                 "5★ share now": r.p5 / 100, "5★ share to hold": pl["five_star_share_needed"],
@@ -136,7 +136,8 @@ with tab_amz:
             st.markdown(
                 f"""The star histogram on Amazon is its **weighted** distribution, not raw counts (small listings show
 shares that can't come from whole ratings). Its weighted mean A matches the displayed rating. The percentages are rounded, so
-A is known only within a range, and every answer is shown as *best–worst*. N = global ratings, T = {target}
+A is known only within a range, narrowed further by the displayed one-decimal value, and every answer is shown as
+*best–worst*. ⚠ means the displayed value and the histogram disagree, so check the page. N = global ratings, T = {target}
 (Amazon shows one decimal, so a mean of {target} or more displays as {shown_target}).
 - 5★ needed: `ceil((T − A)·N / (5 − T))`
 - 1★ it can absorb: `floor((A − T)·N / (T − 1))`
@@ -161,8 +162,8 @@ review listing is available (after login), the per-star filters give raw counts,
         if stars:
             rv = rv[rv["rating"].isin(stars)]
         st.markdown(f"**Stored reviews** ({len(rv)} shown)")
-        st.dataframe(rv[["review_date", "rating", "title", "body", "verified", "variant", "helpful_votes",
-                         "first_seen_at", "source", "review_id"]], hide_index=True, width="stretch")
+        st.dataframe(rv[["review_date", "rating", "title", "body", "verified", "variant", "product", "attribution",
+                         "helpful_votes", "first_seen_at", "source", "review_id"]], hide_index=True, width="stretch")
         with st.expander("Scrape log"):
             st.dataframe(runs_log.sort_values("at", ascending=False).head(100), hide_index=True, width="stretch")
 

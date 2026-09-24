@@ -104,10 +104,10 @@ def parse_product(html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     avg = _num(_text(_first(soup, '[data-hook="rating-out-of-text"]', "#acrPopover span.a-icon-alt")))
     total = _num(_text(_first(soup, '[data-hook="total-review-count"]', "#acrCustomerReviewText")))
-    parent = re.search(r'"parentAsin"\s*:\s*"(\w+)"', html)
+    parents = set(re.findall(r'"parentAsin"\s*:\s*"(\w+)"', html))
     return {
         "title": _text(soup.select_one("#productTitle")),
-        "parent_asin": parent.group(1) if parent else None,
+        "parent_asin": parents.pop() if len(parents) == 1 else None,  # ambiguous -> unknown
         "avg_rating": avg,
         "total_ratings": int(total) if total is not None else None,
         "hist_pct": parse_histogram(soup),

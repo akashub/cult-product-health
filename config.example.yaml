@@ -55,6 +55,9 @@ amazon:
   target_rating: 4.1
   target_mode: displayed          # displayed: star shown as 4.1 (mean >= 4.05); exact: mean >= 4.1
   max_recent_pages: 10             # 'most recent' pages per poll; stops early once caught up
-  delay_seconds: [4, 9]            # random pause between requests
+  delay_seconds: [4, 9]
+  # Reviews in a shared rating pool are credited to a product only if the variant
+  # text identifies it: {parent_asin: {"Colour: Blue": "Product"}}. Others stay pool-level.
+  variant_map: {}            # random pause between requests
   asins:                           # ASIN -> product name (`cultph amazon-discover "<query>"` helps)
     B000000000: Sample Gun A
