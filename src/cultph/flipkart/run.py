@@ -98,6 +98,7 @@ def poll(fk_cfg: dict, backfill: bool = False, headless: bool = True, variant_ma
     try:
         with browser(headless=headless, delay=tuple(fk_cfg.get("delay_seconds", [4, 9]))) as f:
             for path, product in listings.items():
+                f.fresh_page()  # Flipkart pages are heavy; a new tab per listing keeps memory flat
                 url = path if path.startswith("http") else BASE + path
                 try:
                     poll_listing(f, con, url, product, summary, fk_cfg.get("max_recent_pages", 5), backfill)

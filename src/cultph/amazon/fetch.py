@@ -30,7 +30,15 @@ class Fetcher:
         wait = self._last + random.uniform(*self.delay) - time.monotonic()
         if wait > 0:
             time.sleep(wait)
-        self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).lower()
+            if not any(k in msg for k in ("crash", "closed", "net::err", "timeout")):
+                raise
+            time.sleep(3)
+            self.fresh_page()  # crashed tab or network blip: new tab, retry once
+            self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         self.page.wait_for_timeout(1500 + random.randint(0, 1500))
         if scroll:
             self.page.mouse.wheel(0, 3000)
@@ -44,6 +52,15 @@ class Fetcher:
         self._last = time.monotonic()
         return self.page.url, self.page.content()
 
+
+    def fresh_page(self) -> None:
+        """Replaces the tab (frees memory; recovers from a crashed page)."""
+        ctx = self.page.context
+        try:
+            self.page.close()
+        except Exception:  # noqa: BLE001 - already dead
+            pass
+        self.page = ctx.new_page()
 
     def click_show_more(self) -> bool:
         """Amazon's review list loads 10 more per 'Show 10 more reviews' click (max

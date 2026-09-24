@@ -120,6 +120,7 @@ def poll(amazon_cfg: dict, only_asin: str | None = None, backfill: bool = False,
     try:
         with browser(headless=headless, delay=tuple(amazon_cfg.get("delay_seconds", [4, 9]))) as f:
             for asin, product in asins.items():
+                f.fresh_page()
                 try:
                     poll_asin(f, con, domain, asin, product, summary, amazon_cfg.get("max_recent_pages", 10), backfill)
                 except CaptchaHit as e:
