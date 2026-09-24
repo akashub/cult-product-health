@@ -122,7 +122,8 @@ def parse_review_page(html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     empty_marker = bool(_NO_REVIEWS.search(soup.get_text(" ", strip=True)))
     nxt = soup.select_one("li.a-last")
-    has_next = bool(nxt and "a-disabled" not in (nxt.get("class") or []) and nxt.select_one("a"))
+    has_next = bool(nxt and "a-disabled" not in (nxt.get("class") or []) and nxt.select_one("a")) or \
+        bool(soup.select_one('[data-hook="show-more-button"]'))
     filter_info = _text(soup.select_one('[data-hook="cr-filter-info-review-rating-count"]'))
     return {"reviews": parse_reviews(soup), "has_next": has_next, "filter_info": filter_info,
             "empty_marker": empty_marker}

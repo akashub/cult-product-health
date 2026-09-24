@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from cultph.amazon import store
-from cultph.amazon.checks import check_product, implied_gap
+from cultph.amazon.checks import check_product, check_reviews, implied_gap
 from cultph.amazon.parse import detect_block, parse_product, parse_review_page
 from cultph.amazon.rating import avg_range, effective_target, mean_range, five_stars_needed, one_stars_absorbable, plan, required_share_of_five
 
@@ -155,3 +155,16 @@ def test_auth_cookie_detection():
     from cultph.amazon.fetch import has_auth_cookie
     assert has_auth_cookie([{"name": "at-acbin", "value": "x"}])
     assert not has_auth_cookie([{"name": "session-id", "value": "x"}, {"name": "at-acbin", "value": ""}])
+
+
+REAL_LISTING = Path(__file__).resolve().parents[1] / "data" / "raw" / "amz_listing_p1.html"
+
+
+@pytest.mark.skipif(not REAL_LISTING.exists(), reason="no saved real signed-in listing page")
+def test_real_saved_listing_page():
+    rp = parse_review_page(REAL_LISTING.read_text())
+    assert len(rp["reviews"]) == 10 and rp["has_next"] and not rp["empty_marker"]
+    assert all(r["review_id"].startswith("R") and r["rating"] in range(1, 6) and r["review_date"] for r in rp["reviews"])
+    assert all(r["title"] and r["body"] for r in rp["reviews"])
+    assert not any(r["title"].startswith(("1.0 out of", "5.0 out of")) for r in rp["reviews"])
+    assert check_reviews(rp["reviews"]) == []

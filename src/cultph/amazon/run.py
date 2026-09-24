@@ -78,31 +78,36 @@ def poll_asin(f, con, domain, asin, product, summary: RunSummary, max_pages: int
 
     walks = [("recent", None)] + ([(s, star) for star in STAR_FILTERS for s in ("recent", "helpful")] if backfill else [])
     for sort, star in walks:
-        for page in range(1, max_pages + 1):
-            url = (f"https://www.{domain}/product-reviews/{asin}?reviewerType=all_reviews"
-                   f"&sortBy={sort}&pageNumber={page}" + (f"&filterByStar={star}" if star else ""))
-            block, html = _fetch_checked(f, con, asin, url, f"{asin}_reviews_fail")
-            if block == BLOCK_SIGNIN:
-                store.log_run(con, asin, url, "warn", "login required for review listing")
-                summary.login_required = True
-                return
+        url = (f"https://www.{domain}/product-reviews/{asin}?reviewerType=all_reviews&sortBy={sort}"
+               + (f"&filterByStar={star}" if star else ""))
+        block, html = _fetch_checked(f, con, asin, url, f"{asin}_reviews_fail")
+        if block == BLOCK_SIGNIN:
+            store.log_run(con, asin, url, "warn", "login required for review listing")
+            summary.login_required = True
+            return
+        source = f"listing:{sort}:{star or 'all'}"
+        batch = 0
+        while True:
             rp = parse_review_page(html)
             errs = check_reviews(rp["reviews"])
-            if not rp["reviews"] and not rp["empty_marker"] and page == 1:
+            if batch == 0 and not rp["reviews"] and not rp["empty_marker"]:
                 # signed in, not blocked, yet nothing parsed: the markup probably changed
                 errs.append("listing page parsed to 0 reviews without a 'no reviews' message; selectors may be stale")
             if errs:
                 _save_raw(f"{asin}_reviews_fail", html)
                 store.log_run(con, asin, url, "fail", "; ".join(errs))
-                summary.problems.append(f"{asin} p{page}: " + "; ".join(errs))
+                summary.problems.append(f"{asin} {source}: " + "; ".join(errs))
                 break
-            new = store.upsert_reviews(con, asin, product, rp["reviews"], f"listing:{sort}:{star or 'all'}", pool)
+            new = store.upsert_reviews(con, asin, product, rp["reviews"], source, pool)
             summary.new_reviews += [(asin, r) for r in new]
-            store.log_run(con, asin, url, "pass", f"{len(rp['reviews'])} reviews, {len(new)} new; {rp['filter_info'] or ''}")
+            store.log_run(con, asin, url, "pass", f"batch {batch}: {len(rp['reviews'])} on page, {len(new)} new; "
+                                                  f"{rp['filter_info'] or ''}")
             con.commit()
-            caught_up = not backfill and sort == "recent" and rp["reviews"] and not new
-            if caught_up or not rp["has_next"] or not rp["reviews"]:
+            caught_up = not backfill and not new
+            batch += 1
+            if caught_up or batch >= max_pages or not f.click_show_more():
                 break
+            html = f.page.content()
 
 
 def poll(amazon_cfg: dict, only_asin: str | None = None, backfill: bool = False, headless: bool = True) -> RunSummary:

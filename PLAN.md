@@ -24,7 +24,11 @@ This is being built for personal use, so it is deliberately simple.
   - **Amazon displays one decimal,** so "shows 4.1" means a weighted mean of 4.05 or more. This is configurable with `target_mode`.
   - **Variation families share one rating pool** (the same `parentAsin`). Several ASINs can show identical ratings, so the dashboard groups them.
   - Amazon sometimes serves an alternate page layout with no ratings block. The poller retries, and the judge never stores a page that fails its checks.
-- **Review listing (`/product-reviews/`):** redirects to sign-in when logged out. With a saved login, the poller reads "most recent" until it reaches reviews it already has. `--backfill` walks every star filter. The page cap for each filter still needs checking once logged in.
+- **Review listing (`/product-reviews/`):** redirects to sign-in when logged out. Verified with a signed-in account on 2026-09-24:
+  - There are no page links any more. The list grows with a **"Show 10 more reviews"** button, which the poller clicks.
+  - The button stops at **100 reviews per sort order and star filter**. So "most recent" covers the latest 100, and `--backfill` (5 star filters × 2 sort orders) reaches up to about 1,000 per listing.
+  - The filter header shows the number of *written reviews* ("937 customer reviews", or "223 matching" for 1★), not rating counts, so it doesn't make the rating math exact.
+  - Each poll clicks only until it reaches reviews it already has.
 
 ### Flipkart findings (Sep 2026)
 - **No login and no bot wall.** The product page has schema.org JSON-LD with the rating value, rating count, review count and a link to the reviews page.

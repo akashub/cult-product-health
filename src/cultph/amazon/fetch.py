@@ -44,6 +44,24 @@ class Fetcher:
         return self.page.url, self.page.content()
 
 
+    def click_show_more(self) -> bool:
+        """Amazon's review list loads 10 more per 'Show 10 more reviews' click (max
+        100 per sort/filter). Returns False when there is no button or nothing loaded."""
+        btn = self.page.locator('[data-hook="show-more-button"]')
+        if not btn.count() or not btn.first.is_visible():
+            return False
+        n = self.page.locator('[data-hook="review"]').count()
+        time.sleep(random.uniform(1.5, 3.5))
+        btn.first.click()
+        try:
+            self.page.wait_for_function(
+                "n => document.querySelectorAll('[data-hook=\"review\"]').length > n", arg=n, timeout=15_000)
+        except Exception:  # noqa: BLE001 - no growth
+            return False
+        self.page.wait_for_timeout(800)
+        return True
+
+
 @contextmanager
 def browser(headless: bool = True, delay: tuple[float, float] = (4.0, 9.0)):
     from playwright.sync_api import sync_playwright
