@@ -1,0 +1,25 @@
+# Raw business data: contains customer PII (emails, order IDs, AWBs). Never commit.
+*.xlsx
+*.xls
+*.csv
+data/
+exports/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+credentials*.json
+token*.json
+
+# Tooling
+node_modules/
+.next/
+dist/
+.venv/
+__pycache__/
+.DS_Store
+
+# Private notes with internal Cult figures. Local only, never pushed.
+*.private.md
