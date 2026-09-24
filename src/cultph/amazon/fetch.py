@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from ..config import DATA_DIR
 
 PROFILE_DIR = DATA_DIR / "amazon_profile"
+SESSION_FILE = DATA_DIR / "amazon_session.json"  # exported cookies, portable across machines
 RAW_DIR = DATA_DIR / "raw"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
@@ -72,6 +73,11 @@ def browser(headless: bool = True, delay: tuple[float, float] = (4.0, 9.0)):
             str(PROFILE_DIR), headless=headless, locale="en-IN", user_agent=UA,
             viewport={"width": 1366, "height": 900})
         try:
+            # a profile copied between OSes can't decrypt its cookies; fall back to the exported session
+            if SESSION_FILE.exists() and not has_auth_cookie(ctx.cookies()):
+                import json
+
+                ctx.add_cookies(json.loads(SESSION_FILE.read_text()).get("cookies", []))
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             yield Fetcher(page, delay)
         finally:
@@ -113,6 +119,17 @@ def interactive_login(domain: str, timeout_s: int = 600) -> bool:
                 break
         print("Not signed in (window closed or timed out).")
         return False
+
+
+def export_session() -> bool:
+    """Writes the signed-in cookies to data/amazon_session.json (for use on a server)."""
+    with browser(headless=True, delay=(0, 0)) as f:
+        ctx = f.page.context
+        if not has_auth_cookie(ctx.cookies()):
+            return False
+        ctx.storage_state(path=str(SESSION_FILE))
+    SESSION_FILE.chmod(0o600)
+    return True
 
 
 def check_session(domain: str, asin: str) -> str:

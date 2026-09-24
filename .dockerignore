@@ -1,0 +1,9 @@
+.venv
+.git
+__pycache__
+*.xlsx
+*.xls
+*.csv
+data/
+config.private.yaml
+*.private.md

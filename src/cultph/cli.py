@@ -99,6 +99,14 @@ def cmd_amazon_login(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_amazon_export(args) -> int:
+    from .amazon.fetch import SESSION_FILE, export_session
+
+    ok = export_session()
+    print(f"session exported to {SESSION_FILE}" if ok else "not signed in; run `cultph amazon-login` first")
+    return 0 if ok else 1
+
+
 def cmd_amazon_discover(args) -> int:
     from .amazon.run import discover
 
@@ -287,6 +295,7 @@ def main(argv=None) -> int:
     a.add_argument("--headed", action="store_true", help="show the browser")
     a.set_defaults(fn=cmd_amazon)
     sub.add_parser("amazon-login").set_defaults(fn=cmd_amazon_login)
+    sub.add_parser("amazon-export-session", help="save signed-in cookies for a server").set_defaults(fn=cmd_amazon_export)
     fk = sub.add_parser("flipkart")
     fk.add_argument("--backfill", action="store_true", help="walk all review pages")
     fk.add_argument("--headed", action="store_true")

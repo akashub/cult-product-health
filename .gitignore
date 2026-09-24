@@ -25,3 +25,6 @@ __pycache__/
 *.private.md
 config.private.yaml
 *.private.yaml
+
+# server seed snapshot (built locally, never committed)
+seed/
