@@ -5,6 +5,7 @@
   cultph amazon    poll configured ASINs (ratings, histogram, new reviews)
   cultph amazon-login      sign in once in a visible browser (secondary account)
   cultph amazon-discover Q list Cult-brand search results to build the ASIN list
+  cultph label     classify new reviews one by one (classifier + judge)
 """
 
 from __future__ import annotations
@@ -70,6 +71,38 @@ def cmd_amazon_discover(args) -> int:
     return 0
 
 
+def cmd_label(args) -> int:
+    from .ai import store as label_store
+    from .ai.labels import PROMPT_VERSION, Labeler
+    from .amazon import store as amazon_store
+
+    cfg = load_config(args.config)
+    ai = cfg.raw.get("ai", {})
+    taxonomy = ai.get("taxonomy") or []
+    if not taxonomy:
+        print("no ai.taxonomy in config")
+        return 1
+    con = amazon_store.connect()
+    todo = label_store.pending_reviews(con, PROMPT_VERSION, args.limit)
+    print(f"{len(todo)} reviews to label")
+    labeler = Labeler(taxonomy, ai.get("classifier_model", "claude-haiku-4-5-20251001"),
+                      ai.get("judge_model", "claude-sonnet-5"))
+    counts = {"auto": 0, "queue": 0, "error": 0}
+    for i, r in enumerate(todo, 1):
+        try:
+            lab = labeler.label(r)
+        except Exception as e:  # noqa: BLE001 - one bad call must not stop the batch
+            counts["error"] += 1
+            print(f"  ✘ {r['review_id']}: {e}")
+            continue
+        label_store.save_label(con, lab)
+        con.commit()
+        counts[lab["status"]] += 1
+        print(f"  [{i}/{len(todo)}] {r['review_id']} {lab['status']:<5} {lab['codes'] or '-'}")
+    print(f"auto {counts['auto']}  queued for review {counts['queue']}  errors {counts['error']}")
+    return 1 if counts["error"] else 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="cultph")
     p.add_argument("--config", help="path to config yaml (default: config.private.yaml, else example)")
@@ -85,6 +118,9 @@ def main(argv=None) -> int:
     d = sub.add_parser("amazon-discover")
     d.add_argument("query")
     d.set_defaults(fn=cmd_amazon_discover)
+    lb = sub.add_parser("label")
+    lb.add_argument("--limit", type=int)
+    lb.set_defaults(fn=cmd_label)
     args = p.parse_args(argv)
     return args.fn(args)
 

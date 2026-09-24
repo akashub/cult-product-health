@@ -31,7 +31,7 @@ This is being built for personal use, so it is deliberately simple.
 |---|---|
 | 1. Sheets and returns: parser, SQLite, judge, dashboard | ✅ done. The real workbook reconciles exactly with the sheet's own Dashboard across all months; 0 rows rejected; 100% of named models mapped |
 | 2. Amazon ratings and reviews (own parser) | ✅ product-page poller, append-only review store, scrape judge, 4.1 calculator, dashboard tab. The full review listing needs a one-time login (`cultph amazon-login`) |
-| 3. AI review classification with a judge | ⏳ |
+| 3. AI review classification with a judge | ✅ built and tested with a fake model client. `cultph label` needs `ANTHROPIC_API_KEY`. Haiku labels each review; code checks the evidence quotes and the codes; Sonnet judges; disagreements go to a person in the dashboard queue, which also builds the gold set |
 | 4. Alerts and scheduling | ⏳ |
 
 ---

@@ -89,9 +89,9 @@ st.title("Cult Product Health")
 st.caption("Phase 1 · returns, exchanges and support tickets from the shared sheet. "
            "Return % needs units-sold data (not in the sheet yet).")
 
-tab_over, tab_amz, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
-    ["Overview", "Amazon ratings & reviews", "Returns & exchanges", "Support tickets", "Pending verification",
-     "Warehouse returns", "Data quality"])
+tab_over, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
+    ["Overview", "Amazon ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
+     "Pending verification", "Warehouse returns", "Data quality"])
 
 
 @st.cache_data(ttl=60)
@@ -195,6 +195,86 @@ with tab_over:
                  column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
     st.subheader("Monthly trend (approved returns + exchanges)")
     st.bar_chart(approved.groupby(["month", "mode"]).size().unstack(fill_value=0))
+
+with tab_iss:
+    import json
+
+    from cultph.ai import store as label_store
+    from cultph.ai.labels import PROMPT_VERSION
+
+    has_labels = AMAZON_DB.exists() and sqlite3.connect(AMAZON_DB).execute(
+        "SELECT count(*) FROM sqlite_master WHERE name='review_label'").fetchone()[0]
+    if not has_labels:
+        st.info("No labelled reviews yet. Run `uv run cultph label` (needs ANTHROPIC_API_KEY).")
+    else:
+        with sqlite3.connect(AMAZON_DB) as con:
+            lab = pd.read_sql(
+                "SELECT l.*, r.asin, r.product, r.attribution, r.rating, r.title, r.body, r.review_date "
+                "FROM review_label l JOIN review r USING (review_id) WHERE l.prompt_version = ?",
+                con, params=(PROMPT_VERSION,))
+        # final label: human fix > human-confirmed or auto; unreviewed queue items are excluded
+        lab["final"] = lab["status"].eq("auto") | lab["human_verdict"].isin(["correct", "fixed"])
+        lab["final_codes"] = lab["codes"].where(lab["human_verdict"] != "fixed", lab["human_codes"]).fillna("")
+        human = lab[lab["human_verdict"].notna()]
+        k = st.columns(5)
+        k[0].metric("Labelled reviews", len(lab))
+        k[1].metric("Auto-accepted", f"{(lab['status'] == 'auto').mean():.0%}")
+        k[2].metric("Waiting in queue", int(((lab["status"] == "queue") & lab["human_verdict"].isna()).sum()))
+        k[3].metric("Checked by a person", len(human))
+        k[4].metric("AI agreement (gold set)",
+                    f"{(human['human_verdict'] == 'correct').mean():.0%}" if len(human) else "n/a",
+                    help="Share of person-checked labels where the AI label was right")
+        st.caption(f"Issue shares use final labels only ({int(lab['final'].sum())} reviews). A review can have several "
+                   "issues, so shares don't add up to 100%. Reviews from shared rating pools are left out of per-product numbers.")
+
+        fin = lab[lab["final"] & lab["product"].notna()]
+        exploded = fin.assign(code=fin["final_codes"].str.split(",")).explode("code")
+        exploded = exploded[exploded["code"].fillna("") != ""]
+        denom = fin.groupby("product").size().rename("labelled_reviews")
+        share = (exploded.groupby(["product", "code"])["review_id"].nunique().rename("reviews").reset_index()
+                 .merge(denom, on="product"))
+        share["share"] = share["reviews"] / share["labelled_reviews"]
+        share = share.sort_values(["product", "reviews"], ascending=[True, False])
+        ev = st.dataframe(share, hide_index=True, width="stretch", key="iss_share", on_select="rerun",
+                          selection_mode="single-row",
+                          column_config={"share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
+        if ev and ev.selection and ev.selection.rows:
+            sel = share.iloc[ev.selection.rows[0]]
+            sub = exploded[(exploded["product"] == sel["product"]) & (exploded["code"] == sel["code"])]
+            ev_rows = []
+            for r in sub.itertuples():
+                quote = next((i["evidence"] for i in json.loads(r.issues) if i["code"] == sel["code"]), "")
+                ev_rows.append({"review_date": r.review_date, "rating": r.rating, "evidence": quote,
+                                "title": r.title, "body": r.body, "status": r.status, "human": r.human_verdict,
+                                "review_id": r.review_id})
+            st.caption(f"{len(ev_rows)} reviews behind {sel['reviews']} / {sel['labelled_reviews']}")
+            st.dataframe(pd.DataFrame(ev_rows), hide_index=True, width="stretch")
+
+        st.subheader("Review queue")
+        st.caption("Labels the judge didn't agree with, or whose evidence quote failed the check. Your decisions form the gold set.")
+        codes_all = [t["code"] for t in load_config().raw.get("ai", {}).get("taxonomy", [])]
+        queue = lab[(lab["status"] == "queue") & lab["human_verdict"].isna()].head(20)
+        if queue.empty:
+            st.success("Queue is empty.")
+        for r in queue.itertuples():
+            with st.container(border=True):
+                st.markdown(f"**{r.rating}★ · {r.title or ''}**  \n{r.body or ''}")
+                st.markdown("AI label: " + (", ".join(f"`{i['code']}` — “{i['evidence']}”" for i in json.loads(r.issues)) or "_no issues_"))
+                st.caption(f"judge: {r.judge_verdict} — {r.judge_reason}"
+                           + (f" · checks: {r.check_errors}" if r.check_errors else ""))
+                c1, c2, c3 = st.columns([1, 3, 1])
+                if c1.button("AI is correct", key=f"ok_{r.review_id}"):
+                    with sqlite3.connect(AMAZON_DB) as con:
+                        label_store.set_human(con, r.review_id, PROMPT_VERSION, "correct")
+                    st.cache_data.clear()
+                    st.rerun()
+                fix = c2.multiselect("Correct codes", codes_all, default=[c for c in (r.codes or "").split(",") if c],
+                                     key=f"codes_{r.review_id}")
+                if c3.button("Save fix", key=f"fix_{r.review_id}"):
+                    with sqlite3.connect(AMAZON_DB) as con:
+                        label_store.set_human(con, r.review_id, PROMPT_VERSION, "fixed", ",".join(sorted(fix)))
+                    st.cache_data.clear()
+                    st.rerun()
 
 with tab_ret:
     df = filters(approved, "ret")

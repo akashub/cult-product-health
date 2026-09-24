@@ -12,6 +12,17 @@ cp config.example.yaml config.private.yaml   # fill in real tab names, headers, 
 uv run cultph sync                           # parse → judge → publish (blocked if any check fails)
 uv run streamlit run app/dashboard.py        # open the dashboard
 uv run pytest                                # tests (synthetic fixture; real-data test runs only locally)
+
+# Amazon (own parser, Playwright)
+uv run playwright install chromium           # once
+uv run cultph amazon-discover "cult massage gun"   # find ASINs, then add them under amazon.asins
+uv run cultph amazon-login                   # once, in your own terminal: sign in (use a secondary account)
+uv run cultph amazon                         # poll: ratings, histogram, new reviews
+uv run cultph amazon --backfill              # walk every star filter (needs login)
+
+# AI issue labels (classifier + judge)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > data/.env
+uv run cultph label                          # labels new/changed reviews one by one
 ```
 
 To try it without real data, run `uv run python tests/make_fixture.py` and then `uv run cultph --config config.example.yaml sync`.

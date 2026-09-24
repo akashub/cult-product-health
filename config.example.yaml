@@ -61,3 +61,23 @@ amazon:
   variant_map: {}            # random pause between requests
   asins:                           # ASIN -> product name (`cultph amazon-discover "<query>"` helps)
     B000000000: Sample Gun A
+
+ai:
+  classifier_model: claude-haiku-4-5-20251001
+  judge_model: claude-sonnet-5
+  taxonomy:                        # code: what counts. Align with the issue names in your return sheet.
+    - {code: dead_on_arrival, description: "does not turn on at all, dead from the start or soon after"}
+    - {code: stopped_working, description: "worked at first, then stopped"}
+    - {code: charging, description: "does not charge, charges slowly, charger/port problems"}
+    - {code: battery, description: "battery drains fast or short runtime"}
+    - {code: noise_vibration, description: "loud, rattling, abnormal noise or vibration"}
+    - {code: weak_power, description: "too weak, low intensity/speed, not effective"}
+    - {code: heat_safety, description: "overheating, burning smell, sparks, shock, swelling"}
+    - {code: buttons_controls, description: "buttons, display, app or remote not working"}
+    - {code: damaged_defective, description: "arrived broken, scratched, missing parts, used/old unit"}
+    - {code: accuracy, description: "weighing scale readings wrong or inconsistent"}
+    - {code: build_quality, description: "feels cheap, parts break, poor materials"}
+    - {code: size_fit, description: "does not fit feet/body, too small/big, uncomfortable"}
+    - {code: service_warranty, description: "refund, replacement, warranty or customer support problems"}
+    - {code: delivery, description: "late delivery, wrong item, packaging"}
+    - {code: value_price, description: "overpriced or not worth the money"}
