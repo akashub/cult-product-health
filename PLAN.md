@@ -26,12 +26,18 @@ This is being built for personal use, so it is deliberately simple.
   - Amazon sometimes serves an alternate page layout with no ratings block. The poller retries, and the judge never stores a page that fails its checks.
 - **Review listing (`/product-reviews/`):** redirects to sign-in when logged out. With a saved login, the poller reads "most recent" until it reaches reviews it already has. `--backfill` walks every star filter. The page cap for each filter still needs checking once logged in.
 
+### Flipkart findings (Sep 2026)
+- **No login and no bot wall.** The product page has schema.org JSON-LD with the rating value, rating count, review count and a link to the reviews page.
+- **The reviews page (sorted by latest) shows *exact* per-star counts,** so the 4.1-style math on Flipkart is exact rather than a range. The judge checks that the star counts add up to the ratings total.
+- The page is React Native Web, with no stable class names and no review IDs. Reviews are parsed from the visible text pattern, and each gets a stable ID made by hashing the listing, reviewer, city, title and body (reviewer names are not stored). Dates are relative ("3 days ago", "2 months ago"), so each review records how precise its date is.
+
 ### Phase status
 | Phase | Status |
 |---|---|
 | 1. Sheets and returns: parser, SQLite, judge, dashboard | ✅ done. The real workbook reconciles exactly with the sheet's own Dashboard across all months; 0 rows rejected; 100% of named models mapped |
 | 2. Amazon ratings and reviews (own parser) | ✅ product-page poller, append-only review store, scrape judge, 4.1 calculator, dashboard tab. The full review listing needs a one-time login (`cultph amazon-login`) |
 | 3. AI review classification with a judge | ✅ built and tested with a fake model client. `cultph label` needs `ANTHROPIC_API_KEY`. Haiku labels each review; code checks the evidence quotes and the codes; Sonnet judges; disagreements go to a person in the dashboard queue, which also builds the gold set |
+| 5. Handover / unattended setup | ✅ `cultph setup` and `cultph doctor [--live]`; Flipkart poller; sales-based return % and selling %; massager/scale category; cross-platform `watch`; optional dashboard password; SETUP.md and a private handover bundle |
 | 4. Alerts and scheduling | ✅ `cultph run` (sync → Amazon → label → alerts); rules for new 1–2★ reviews, safety labels, rating changes, crossing the target, and weekly return spikes; the first run only records a baseline; each alert is sent once; macOS notifications by default, plus Telegram/Slack/email when configured; `cultph schedule` writes a launchd plist (not installed) |
 
 ---

@@ -5,6 +5,8 @@
   cultph amazon    poll configured ASINs (ratings, histogram, new reviews)
   cultph amazon-login      sign in once in a visible browser (secondary account)
   cultph amazon-discover Q list Cult-brand search results to build the ASIN list
+  cultph flipkart  poll configured Flipkart listings (no login needed)
+  cultph flipkart-discover Q  list Cult-brand Flipkart product paths
   cultph label     classify new reviews one by one (classifier + judge)
   cultph alerts    evaluate alert rules and notify (first run sets a baseline)
   cultph run       sync → amazon → label (if API key) → alerts; for scheduling
@@ -68,6 +70,25 @@ def cmd_amazon(args) -> int:
     for p in s.problems:
         print(f" ✘ {p}")
     return 1 if s.problems else 0
+
+
+def cmd_flipkart(args) -> int:
+    from .flipkart.run import poll
+
+    cfg = load_config(args.config)
+    s = poll(cfg.raw.get("flipkart", {}), backfill=args.backfill, headless=not args.headed)
+    print(f"flipkart snapshots: {s.snapshots}  new reviews: {len(s.new_reviews)}")
+    for p in s.problems:
+        print(f" ✘ {p}")
+    return 1 if s.problems else 0
+
+
+def cmd_flipkart_discover(args) -> int:
+    from .flipkart.run import discover
+
+    for path in discover(args.query):
+        print(f"{path}")
+    return 0
 
 
 def cmd_amazon_login(args) -> int:
@@ -160,7 +181,7 @@ def cmd_alerts(args) -> int:
 def cmd_run(args) -> int:
     from .config import env
 
-    steps = [("sync", cmd_sync), ("amazon", cmd_amazon)]
+    steps = [("sync", cmd_sync), ("amazon", cmd_amazon), ("flipkart", cmd_flipkart)]
     if env("ANTHROPIC_API_KEY"):
         steps.append(("label", cmd_label))
     else:
@@ -249,6 +270,13 @@ def main(argv=None) -> int:
     a.add_argument("--headed", action="store_true", help="show the browser")
     a.set_defaults(fn=cmd_amazon)
     sub.add_parser("amazon-login").set_defaults(fn=cmd_amazon_login)
+    fk = sub.add_parser("flipkart")
+    fk.add_argument("--backfill", action="store_true", help="walk all review pages")
+    fk.add_argument("--headed", action="store_true")
+    fk.set_defaults(fn=cmd_flipkart)
+    fd = sub.add_parser("flipkart-discover")
+    fd.add_argument("query")
+    fd.set_defaults(fn=cmd_flipkart_discover)
     d = sub.add_parser("amazon-discover")
     d.add_argument("query")
     d.set_defaults(fn=cmd_amazon_discover)

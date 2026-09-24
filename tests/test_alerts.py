@@ -12,7 +12,8 @@ BASE = {"country": "India", "verified": True, "variant": None, "helpful_votes": 
 
 
 def snap(con, asin, avg, hist, at):
-    con.execute("INSERT INTO rating_snapshot VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    con.execute("INSERT INTO rating_snapshot (asin, parent_asin, product, captured_at, avg_rating, total_ratings, "
+                "p5, p4, p3, p2, p1, hist_avg_min, hist_avg_max) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (asin, asin, "Gun A", at, avg, 100, hist[5], hist[4], hist[3], hist[2], hist[1], 0, 0))
 
 

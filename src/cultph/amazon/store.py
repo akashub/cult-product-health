@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS scrape_run (
 MIGRATIONS = [
     ("review", "parent_asin", "TEXT"),
     ("review", "attribution", "TEXT"),
+    ("review", "platform", "TEXT DEFAULT 'amazon'"),
+    ("review", "date_precision", "TEXT DEFAULT 'day'"),
+    ("rating_snapshot", "platform", "TEXT DEFAULT 'amazon'"),
+    ("rating_snapshot", "c5", "INTEGER"), ("rating_snapshot", "c4", "INTEGER"), ("rating_snapshot", "c3", "INTEGER"),
+    ("rating_snapshot", "c2", "INTEGER"), ("rating_snapshot", "c1", "INTEGER"),
 ]
 
 
@@ -48,13 +53,28 @@ def now() -> str:
 def add_snapshot(con, asin: str, product: str, parsed: dict) -> None:
     h = parsed["hist_pct"]
     a_min, a_max = avg_range(h)
-    con.execute("INSERT INTO rating_snapshot VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    con.execute("INSERT INTO rating_snapshot (asin, parent_asin, product, captured_at, avg_rating, total_ratings, "
+                "p5, p4, p3, p2, p1, hist_avg_min, hist_avg_max, platform) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'amazon')",
                 (asin, parsed.get("parent_asin"), product, now(), parsed["avg_rating"], parsed["total_ratings"],
                  h.get(5), h.get(4), h.get(3), h.get(2), h.get(1), round(a_min, 4), round(a_max, 4)))
 
 
+def add_count_snapshot(con, listing_id: str, product: str, platform: str, displayed: float | None,
+                       counts: dict[int, int]) -> None:
+    """Snapshot for platforms that show exact per-star counts (Flipkart)."""
+    n = sum(counts.values())
+    exact = sum(k * v for k, v in counts.items()) / n if n else None
+    pct = {k: round(100 * v / n) if n else 0 for k, v in counts.items()}
+    con.execute(
+        "INSERT INTO rating_snapshot (asin, parent_asin, product, captured_at, avg_rating, total_ratings, "
+        "p5, p4, p3, p2, p1, hist_avg_min, hist_avg_max, platform, c5, c4, c3, c2, c1) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (listing_id, listing_id, product, now(), displayed, n, pct[5], pct[4], pct[3], pct[2], pct[1],
+         exact, exact, platform, counts[5], counts[4], counts[3], counts[2], counts[1]))
+
+
 def upsert_reviews(con, asin: str, product: str, reviews: list[dict], source: str,
-                   parent_asin: str | None = None) -> list[str]:
+                   parent_asin: str | None = None, platform: str = "amazon") -> list[str]:
     """Inserts unseen reviews, refreshes last_seen/helpful on known ones. Returns new ids."""
     ts, new = now(), []
     known = {r[0] for r in con.execute(
@@ -76,12 +96,15 @@ def upsert_reviews(con, asin: str, product: str, reviews: list[dict], source: st
                         (r["review_id"], asin, product, r["rating"], r["title"], r["body"], r["review_date"],
                          r["country"], int(r["verified"]), r["variant"], r["helpful_votes"], ts, ts, source,
                          parent_asin))
+            con.execute("UPDATE review SET platform=?, date_precision=? WHERE review_id=?",
+                        (platform, r.get("date_precision", "day"), r["review_id"]))
             new.append(r["review_id"])
     return new
 
 
 def log_run(con, asin: str, url: str, status: str, detail: str) -> None:
-    con.execute("INSERT INTO scrape_run VALUES (?,?,?,?,?)", (now(), asin, url, status, detail))
+    con.execute("INSERT INTO scrape_run (at, asin, url, status, detail) VALUES (?,?,?,?,?)",
+                (now(), asin, url, status, detail))
 
 
 def attribute_reviews(con, variant_map: dict | None = None) -> None:

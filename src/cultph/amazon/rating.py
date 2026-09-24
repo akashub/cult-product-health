@@ -98,3 +98,14 @@ def effective_target(target: float, mode: str = "displayed") -> float:
     """Amazon shows one decimal, so 'display 4.1' means a weighted mean >= 4.05.
     mode='exact' requires the mean itself to reach the target."""
     return round(target - 0.05, 4) if mode == "displayed" else target
+
+
+def plan_exact(counts: dict[int, int], target: float = 4.1) -> dict:
+    """Same shape as plan(), for platforms with exact per-star counts (Flipkart)."""
+    n = sum(counts.values())
+    a = sum(k * v for k, v in counts.items()) / n if n else 0.0
+    pct = {k: 100 * v / n if n else 0 for k, v in counts.items()}
+    k5, m1 = five_stars_needed(n, a, target), one_stars_absorbable(n, a, target)
+    return {"n": n, "consistent": True, "avg_range": (round(a, 3), round(a, 3)), "five_star_needed": (k5, k5),
+            "one_star_absorbable": (m1, m1), "five_star_share_needed": required_share_of_five(pct, target),
+            "target": target}

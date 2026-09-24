@@ -10,7 +10,7 @@ import streamlit as st
 
 import sqlite3
 
-from cultph.amazon.rating import effective_target, plan as rating_plan
+from cultph.amazon.rating import effective_target, plan as rating_plan, plan_exact
 from cultph.amazon.store import AMAZON_DB
 from cultph.config import load_config
 from cultph.db import LIVE_DB, last_runs, read_table
@@ -119,7 +119,7 @@ st.caption("Phase 1 · returns, exchanges and support tickets from the shared sh
            "Return % needs units-sold data (not in the sheet yet).")
 
 tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
-    ["Overview", "Alerts", "Amazon ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
+    ["Overview", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
      "Pending verification", "Warehouse returns", "Data quality"])
 
 with tab_alerts:
@@ -156,20 +156,35 @@ with tab_amz:
         st.info("No Amazon data yet. Run `uv run cultph amazon`.")
     else:
         snaps, reviews, runs_log = load_amazon("rating_snapshot"), load_amazon("review"), load_amazon("scrape_run")
+        for d in (snaps, reviews):
+            d["platform"] = d["platform"].fillna("amazon") if "platform" in d else "amazon"
+        platform_pick = st.radio("Platform", sorted(snaps["platform"].unique()), horizontal=True, key="plat_pick",
+                                 format_func=str.title)
+        exact_counts = platform_pick == "flipkart"
+        snaps, reviews = snaps[snaps["platform"] == platform_pick], reviews[reviews["platform"] == platform_pick]
+        if exact_counts:
+            st.caption("Flipkart shows exact per-star counts, so these numbers are exact, not ranges.")
         latest = snaps.sort_values("captured_at").groupby("asin").tail(1)
         pools = latest.groupby("parent_asin")["asin"].apply(list).to_dict()
+        def rng(lo_hi, fmt="{}"):
+            lo, hi = lo_hi
+            return fmt.format(lo) if lo == hi else f"{fmt.format(lo)}–{fmt.format(hi)}"
+
         rows = []
         for r in latest.itertuples():
             hist = {5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}
-            pl = rating_plan(int(r.total_ratings), hist, target, shown=r.avg_rating)
+            if exact_counts:
+                pl = plan_exact({5: r.c5, 4: r.c4, 3: r.c3, 2: r.c2, 1: r.c1}, target)
+            else:
+                pl = rating_plan(int(r.total_ratings), hist, target, shown=r.avg_rating)
             rows.append({
                 "asin": r.asin, "product": r.product, "category": CATEGORY.get(r.product, "?"),
                 "displayed": r.avg_rating, "ratings": r.total_ratings,
-                "weighted mean": f"{pl['avg_range'][0]:.3f}–{pl['avg_range'][1]:.3f}" + ("" if pl["consistent"] else " ⚠"),
-                f"5★ needed to show {shown_target}": "0" if pl["five_star_needed"] == (0, 0) else f"{pl['five_star_needed'][0]}–{pl['five_star_needed'][1]}",
-                "1★ it can absorb": f"{pl['one_star_absorbable'][0]}–{pl['one_star_absorbable'][1]}",
+                ("mean" if exact_counts else "weighted mean"): rng(pl["avg_range"], "{:.3f}") + ("" if pl["consistent"] else " ⚠"),
+                f"5★ needed to show {shown_target}": rng(pl["five_star_needed"]),
+                "1★ it can absorb": rng(pl["one_star_absorbable"]),
                 "5★ share now": r.p5 / 100, "5★ share to hold": pl["five_star_share_needed"],
-                "shares ratings with": ", ".join(a for a in pools.get(r.parent_asin, []) if a != r.asin),
+                **({} if exact_counts else {"shares ratings with": ", ".join(a for a in pools.get(r.parent_asin, []) if a != r.asin)}),
                 "stored reviews (pool)": int(reviews["asin"].isin(pools.get(r.parent_asin, [r.asin])).sum()),
                 "as of": r.captured_at,
             })
@@ -196,7 +211,7 @@ A is known only within a range, narrowed further by the displayed one-decimal va
 New ratings are weighted by Amazon too (by recency, verified purchase and so on), so treat these as estimates to steer by. Once the
 review listing is available (after login), the per-star filters give raw counts, which can tighten this.""")
 
-        pick = st.selectbox("ASIN", table["asin"], format_func=lambda a: f"{a} · {table.set_index('asin').loc[a, 'product']}")
+        pick = st.selectbox("Listing", table["asin"], format_func=lambda a: f"{a} · {table.set_index('asin').loc[a, 'product']}")
         a, b = st.columns(2)
         s_one = snaps[snaps["asin"] == pick].sort_values("captured_at")
         with a:
@@ -204,7 +219,7 @@ review listing is available (after login), the per-star filters give raw counts,
             st.line_chart(s_one.set_index("captured_at")[["avg_rating"]])
         with b:
             last = s_one.iloc[-1]
-            st.markdown("**Star histogram (latest, %)**")
+            st.markdown("**Star distribution (latest, %)**")
             st.bar_chart(pd.Series({f"{k}★": last[f"p{k}"] for k in (5, 4, 3, 2, 1)}))
         pool = pools.get(latest.set_index("asin").loc[pick, "parent_asin"], [pick])
         rv = reviews[reviews["asin"].isin(pool)].sort_values("review_date", ascending=False)

@@ -146,7 +146,8 @@ def evaluate(con, amazon_cfg: dict, alert_cfg: dict, sheet_tables: dict[str, pd.
     # keep only alerts never raised before
     fresh = []
     for a in alerts:
-        cur = con.execute("INSERT OR IGNORE INTO alert_event VALUES (?,?,?,?,?,?,?)",
+        cur = con.execute("INSERT OR IGNORE INTO alert_event (rule, object_key, created_at, priority, title, detail, "
+                          "channels) VALUES (?,?,?,?,?,?,?)",
                           (a.rule, a.object_key, now.isoformat(timespec="seconds"), a.priority, a.title, a.detail, ""))
         if cur.rowcount:
             fresh.append(a)

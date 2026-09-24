@@ -96,3 +96,9 @@ alerts:
   channels: auto                   # every channel with credentials (desktop, telegram, slack, email); or a list
   return_spike_x: 2.0              # weekly returns >= 2x the trailing 4-week average...
   return_spike_min: 5              # ...and at least this many
+
+flipkart:
+  max_recent_pages: 5
+  delay_seconds: [4, 9]
+  listings:                        # product page path -> product (`cultph flipkart-discover "<query>"` helps)
+    /sample-gun-a/p/itm0000000000000: Sample Gun A

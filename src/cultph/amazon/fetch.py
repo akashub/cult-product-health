@@ -23,13 +23,23 @@ class Fetcher:
         self.delay = delay
         self._last = 0.0
 
-    def get(self, url: str) -> tuple[str, str]:
-        """Returns (final_url, html), pausing a random interval between requests."""
+    def get(self, url: str, wait_for_text: str | None = None, scroll: bool = False) -> tuple[str, str]:
+        """Returns (final_url, html), pausing a random interval between requests.
+        wait_for_text: wait up to 12 s for client-rendered content containing it."""
         wait = self._last + random.uniform(*self.delay) - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         self.page.wait_for_timeout(1500 + random.randint(0, 1500))
+        if scroll:
+            self.page.mouse.wheel(0, 3000)
+            self.page.wait_for_timeout(1000)
+        if wait_for_text:
+            try:
+                self.page.wait_for_function("t => document.body && document.body.innerText.includes(t)",
+                                            arg=wait_for_text, timeout=12_000)
+            except Exception:  # noqa: BLE001 - page may legitimately lack it (no reviews)
+                pass
         self._last = time.monotonic()
         return self.page.url, self.page.content()
 

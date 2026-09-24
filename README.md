@@ -2,7 +2,7 @@
 
 A personal dashboard and pipeline for Cult Massagers and Scales. It covers return and exchange data from Google Sheets, Amazon ratings and reviews, and issue analysis. Every number can be traced back to its source row.
 
-See [PLAN.md](./PLAN.md) for the full plan and the phase status.
+**Setting it up on a new computer? Follow [SETUP.md](./SETUP.md).** See [PLAN.md](./PLAN.md) for the design and the phase status.
 
 ## Quick start
 
@@ -20,12 +20,21 @@ uv run cultph amazon-login                   # once, in your own terminal: sign 
 uv run cultph amazon                         # poll: ratings, histogram, new reviews
 uv run cultph amazon --backfill              # walk every star filter (needs login)
 
+# Flipkart (no login needed; exact star counts)
+uv run cultph flipkart-discover "cult massage gun" # find listings, then add them under flipkart.listings
+uv run cultph flipkart                       # poll ratings + latest reviews
+
+# Setup helpers
+uv run cultph setup                          # enter API keys / alert credentials (data/.env)
+uv run cultph doctor [--live]                # what's ready, what's missing, next step
+
 # AI issue labels (classifier + judge)
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > data/.env
 uv run cultph label                          # labels new/changed reviews one by one
 
 # Alerts and scheduling
-uv run cultph run                            # sync → amazon → label (if key) → alerts
+uv run cultph run                            # sync → amazon → flipkart → label (if key) → alerts
+uv run cultph watch --every 60               # keep running every hour (any OS)
 uv run cultph alerts --test                  # check notification channels
 uv run cultph schedule --every 60            # writes a launchd plist and prints how to enable it
 ```
