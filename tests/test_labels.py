@@ -3,7 +3,12 @@
 from types import SimpleNamespace
 
 from cultph.ai import store as label_store
-from cultph.ai.labels import PROMPT_VERSION, Issue, Label, Labeler, Verdict, check_label
+from cultph.ai.labels import PROMPT_VERSION, Issue, Label, Labeler, check_label
+from cultph.ai.labels import Verdict as _Verdict
+
+
+def Verdict(**kw):  # noqa: N802 - test helper mirroring the model with empty code lists
+    return _Verdict(**{"missing_codes": [], "wrong_codes": [], **kw})
 from cultph.amazon import store as amazon_store
 
 TAX = [{"code": "charging", "description": "does not charge"}, {"code": "noise_vibration", "description": "noisy"}]
@@ -95,3 +100,62 @@ def test_audit_sample_draws_only_auto_labels(tmp_path):
     rows = con.execute("SELECT status FROM review_label WHERE audit = 1").fetchall()
     assert rows and all(st == "auto" for (st,) in rows)
     assert label_store.sample_audits(con, PROMPT_VERSION, rate=0.10, min_per_group=3, seed=2) == 0  # tops up only
+
+
+# ---- through the real Anthropic SDK, with the network mocked ----
+import json as _json
+
+import anthropic
+import httpx2
+
+
+def _msg(content):
+    return {"id": "msg_1", "type": "message", "role": "assistant", "model": "m", "content": content,
+            "stop_reason": "end_turn", "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+
+LABEL_JSON = {"issues": [{"code": "charging", "evidence": "not charging after a week"}],
+              "sentiment": "negative", "severity": "medium"}
+VERDICT_JSON = {"verdict": "agree", "reason": "ok", "missing_codes": [], "wrong_codes": []}
+
+
+def _sdk(handler):
+    return anthropic.Anthropic(api_key="test", max_retries=0,
+                               http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+
+
+def test_real_sdk_structured_output_path():
+    sent = []
+
+    def handler(req):
+        body = _json.loads(req.content)
+        sent.append(body)
+        is_label = body["output_config"]["format"]["schema"]["title"] == "Label"
+        return httpx2.Response(200, json=_msg([{"type": "text", "text": _json.dumps(LABEL_JSON if is_label else VERDICT_JSON)}]))
+
+    lab = Labeler(TAX, "claude-haiku-4-5-20251001", "claude-sonnet-5", client=_sdk(handler)).label(REVIEW)
+    assert lab["status"] == "auto" and lab["codes"] == "charging"
+    assert [b["model"] for b in sent] == ["claude-haiku-4-5-20251001", "claude-sonnet-5"]
+    for b in sent:  # strict-friendly schemas: every property required, no extras
+        sch = b["output_config"]["format"]["schema"]
+        assert sch["additionalProperties"] is False and set(sch["required"]) == set(sch["properties"])
+
+
+def test_real_sdk_falls_back_to_tool_use_on_schema_400():
+    sent = []
+
+    def handler(req):
+        body = _json.loads(req.content)
+        sent.append(body)
+        if "output_config" in body:
+            return httpx2.Response(400, json={"type": "error", "error": {"type": "invalid_request_error",
+                                                                          "message": "output_config: unsupported schema"}})
+        name = body["tools"][0]["input_schema"]["title"]
+        return httpx2.Response(200, json=_msg([{"type": "tool_use", "id": "tu_1", "name": "submit",
+                                                 "input": LABEL_JSON if name == "Label" else VERDICT_JSON}]))
+
+    lb = Labeler(TAX, "h", "s", client=_sdk(handler))
+    assert lb.label(REVIEW)["status"] == "auto"
+    assert lb.label(REVIEW)["status"] == "auto"
+    # first call per model tries structured output once, then tool mode sticks
+    assert sum("output_config" in b for b in sent) == 2 and sum("tools" in b for b in sent) == 4

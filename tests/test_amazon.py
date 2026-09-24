@@ -144,3 +144,14 @@ def test_ambiguous_parent_asin_is_none():
     two = html + '<script>{"parentAsin":"P1"}{"parentAsin":"P2"}</script>'
     assert parse_product(one)["parent_asin"] == "P1"
     assert parse_product(two)["parent_asin"] is None
+
+
+def test_listing_empty_marker():
+    assert parse_review_page("<html><body>No customer reviews</body></html>")["empty_marker"]
+    assert not parse_review_page("<html><body><div class='new-layout'>x</div></body></html>")["empty_marker"]
+
+
+def test_auth_cookie_detection():
+    from cultph.amazon.fetch import has_auth_cookie
+    assert has_auth_cookie([{"name": "at-acbin", "value": "x"}])
+    assert not has_auth_cookie([{"name": "session-id", "value": "x"}, {"name": "at-acbin", "value": ""}])

@@ -54,6 +54,8 @@ def split_ids(v) -> list[str]:
 def clean_text(v) -> str | None:
     if is_blank(v):
         return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)  # xlsx gives 564690.0 where Sheets gives 564690
     return re.sub(r"\s+", " ", str(v)).strip() or None
 
 

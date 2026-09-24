@@ -37,8 +37,8 @@ class Label(BaseModel):
 class Verdict(BaseModel):
     verdict: Literal["agree", "disagree", "unsure"]
     reason: str
-    missing_codes: list[str] = Field(default_factory=list, description="Codes the label should have included")
-    wrong_codes: list[str] = Field(default_factory=list, description="Codes the label should not have included")
+    missing_codes: list[str] = Field(description="Codes the label should have included; empty if none")
+    wrong_codes: list[str] = Field(description="Codes the label should not have included; empty if none")
 
 
 def taxonomy_text(taxonomy: list[dict]) -> str:
@@ -106,11 +106,27 @@ class Labeler:
         self.judge_model = judge_model
         self.category = category
         self.client = client or make_client()
+        self._tool_mode: set[str] = set()
 
     def _parse(self, model: str, prompt: str, schema):
-        msg = self.client.messages.parse(model=model, max_tokens=1024, output_format=schema,
-                                         messages=[{"role": "user", "content": prompt}])
-        return msg.parsed_output
+        """Structured output first; if the API rejects the schema (400), fall back to
+        a forced tool call with the same schema, and keep using it for this model."""
+        messages = [{"role": "user", "content": prompt}]
+        if model not in self._tool_mode:
+            try:
+                msg = self.client.messages.parse(model=model, max_tokens=1024, output_format=schema, messages=messages)
+                return msg.parsed_output
+            except Exception as e:  # noqa: BLE001
+                if getattr(e, "status_code", None) != 400:
+                    raise
+                self._tool_mode.add(model)
+        msg = self.client.messages.create(
+            model=model, max_tokens=1024, messages=messages,
+            tools=[{"name": "submit", "description": f"Submit the {schema.__name__}",
+                    "input_schema": schema.model_json_schema()}],
+            tool_choice={"type": "tool", "name": "submit"})
+        block = next(b for b in msg.content if b.type == "tool_use")
+        return schema.model_validate(block.input)
 
     def label(self, r: dict) -> dict:
         tax = taxonomy_text(self.taxonomy)
@@ -132,10 +148,10 @@ class Labeler:
         }
 
 
-def make_client():
+def make_client(http_client=None):
     import anthropic
 
     key = env("ANTHROPIC_API_KEY")
     if not key:
-        raise RuntimeError("Set ANTHROPIC_API_KEY or put it in data/.env")
-    return anthropic.Anthropic(api_key=key)
+        raise RuntimeError("No ANTHROPIC_API_KEY: run `cultph setup` or put it in data/.env")
+    return anthropic.Anthropic(api_key=key, http_client=http_client) if http_client else anthropic.Anthropic(api_key=key)

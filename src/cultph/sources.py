@@ -37,22 +37,43 @@ class XlsxSource:
         return [list(r) for r in self._wb[tab].iter_rows(values_only=True)]
 
 
+class GoogleAuthError(RuntimeError):
+    pass
+
+
+def google_client(auth: str = "oauth"):
+    """auth='oauth': sign in with Gmail (desktop flow). Client JSON at
+    data/google_client.json, token cached in data/google_token.json. Apps left in
+    Google's 'Testing' mode get tokens that expire after 7 days; set the app to
+    'In production' (unverified is fine for personal use) to avoid weekly re-login.
+    auth='service_account': key at data/google_service_account.json; share the
+    sheets with that account's email. Never expires; best for scheduled runs."""
+    import gspread
+
+    if auth == "service_account":
+        key = DATA_DIR / "google_service_account.json"
+        if not key.exists():
+            raise GoogleAuthError(f"missing {key}; see SETUP.md (Google service account)")
+        return gspread.service_account(filename=str(key), scopes=SCOPES)
+    client_json = DATA_DIR / "google_client.json"
+    if not client_json.exists():
+        raise GoogleAuthError(f"missing {client_json}; see SETUP.md (Google OAuth client)")
+    try:
+        return gspread.oauth(scopes=SCOPES, credentials_filename=str(client_json),
+                             authorized_user_filename=str(DATA_DIR / "google_token.json"))
+    except Exception as e:  # noqa: BLE001 - google.auth RefreshError and friends
+        if "invalid_grant" in str(e) or "expired" in str(e).lower() or type(e).__name__ == "RefreshError":
+            (DATA_DIR / "google_token.json").unlink(missing_ok=True)
+            raise GoogleAuthError("Google login expired or was revoked. Run `uv run cultph sheets` to sign in again. "
+                                  "(Apps in Google 'Testing' mode expire every 7 days; see SETUP.md.)") from e
+        raise
+
+
 class GSheetSource:
-    """Reads a Google Sheet the user can access, via desktop OAuth.
+    """Reads a Google Sheet the user can access (OAuth or service account)."""
 
-    Put the OAuth client JSON (type "Desktop app") at data/google_client.json;
-    the first run opens a browser to sign in with Gmail and caches the token in
-    data/google_token.json."""
-
-    def __init__(self, spreadsheet_id: str):
-        import gspread
-
-        self._gc = gspread.oauth(
-            scopes=SCOPES,
-            credentials_filename=str(DATA_DIR / "google_client.json"),
-            authorized_user_filename=str(DATA_DIR / "google_token.json"),
-        )
-        self._sh = self._gc.open_by_key(spreadsheet_id)
+    def __init__(self, spreadsheet_id: str, auth: str = "oauth"):
+        self._sh = google_client(auth).open_by_key(spreadsheet_id)
 
     def table(self, tab: str) -> Table:
         values = self._sh.worksheet(tab).get_all_values(value_render_option="UNFORMATTED_VALUE",
@@ -66,16 +87,9 @@ class GSheetSource:
         return self._sh.worksheet(tab).get_all_values(value_render_option="UNFORMATTED_VALUE")
 
 
-def list_shared_sheets() -> list[dict]:
-    """Spreadsheets visible to the signed-in Gmail account (owned or shared)."""
-    import gspread
-
-    gc = gspread.oauth(
-        scopes=SCOPES,
-        credentials_filename=str(DATA_DIR / "google_client.json"),
-        authorized_user_filename=str(DATA_DIR / "google_token.json"),
-    )
-    return gc.list_spreadsheet_files()
+def list_shared_sheets(auth: str = "oauth") -> list[dict]:
+    """Spreadsheets visible to the signed-in account (owned or shared)."""
+    return google_client(auth).list_spreadsheet_files()
 
 
 def open_source(source_cfg: dict):
@@ -86,5 +100,5 @@ def open_source(source_cfg: dict):
         p = Path(source_cfg["path"])
         return XlsxSource(p if p.is_absolute() else ROOT / p)
     if kind == "gsheet":
-        return GSheetSource(source_cfg["spreadsheet_id"])
+        return GSheetSource(source_cfg["spreadsheet_id"], source_cfg.get("auth", "oauth"))
     raise ValueError(f"unknown source type {kind!r}")

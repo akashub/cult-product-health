@@ -4,6 +4,7 @@ source:
   type: xlsx                       # or: gsheet
   path: data/sample.xlsx           # `uv run python tests/make_fixture.py` creates this
   # spreadsheet_id: "<id from `cultph sheets`>"
+  # auth: oauth                    # or service_account (never expires; share the sheet with its email)
 
 dayfirst: true
 

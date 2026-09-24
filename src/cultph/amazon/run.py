@@ -87,6 +87,9 @@ def poll_asin(f, con, domain, asin, product, summary: RunSummary, max_pages: int
                 return
             rp = parse_review_page(html)
             errs = check_reviews(rp["reviews"])
+            if not rp["reviews"] and not rp["empty_marker"] and page == 1:
+                # signed in, not blocked, yet nothing parsed: the markup probably changed
+                errs.append("listing page parsed to 0 reviews without a 'no reviews' message; selectors may be stale")
             if errs:
                 _save_raw(f"{asin}_reviews_fail", html)
                 store.log_run(con, asin, url, "fail", "; ".join(errs))

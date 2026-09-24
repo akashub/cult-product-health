@@ -115,9 +115,14 @@ def parse_product(html: str) -> dict:
     }
 
 
+_NO_REVIEWS = re.compile(r"no customer reviews|there are 0 customer reviews|0 global ratings|no reviews yet", re.I)
+
+
 def parse_review_page(html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
+    empty_marker = bool(_NO_REVIEWS.search(soup.get_text(" ", strip=True)))
     nxt = soup.select_one("li.a-last")
     has_next = bool(nxt and "a-disabled" not in (nxt.get("class") or []) and nxt.select_one("a"))
     filter_info = _text(soup.select_one('[data-hook="cr-filter-info-review-rating-count"]'))
-    return {"reviews": parse_reviews(soup), "has_next": has_next, "filter_info": filter_info}
+    return {"reviews": parse_reviews(soup), "has_next": has_next, "filter_info": filter_info,
+            "empty_marker": empty_marker}

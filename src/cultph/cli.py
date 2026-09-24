@@ -26,8 +26,14 @@ ICON = {"pass": "✔", "warn": "!", "fail": "✘"}
 
 
 def cmd_sync(args) -> int:
+    from .sources import GoogleAuthError
+
     cfg = load_config(args.config)
-    source = open_source(cfg.source)
+    try:
+        source = open_source(cfg.source)
+    except (GoogleAuthError, FileNotFoundError) as e:
+        print(f" ✘ source: {e}")
+        return 1
     res = ingest(source, cfg)
     checks = run_checks(res, cfg, source)
     status = verdict(checks)
@@ -40,8 +46,11 @@ def cmd_sync(args) -> int:
 
 
 def cmd_sheets(args) -> int:
-    for f in list_shared_sheets():
+    auth = load_config(args.config).source.get("auth", "oauth")
+    files = list_shared_sheets(auth)
+    for f in files:
         print(f"{f['id']}  {f['name']}")
+    print(f"\n{len(files)} spreadsheets. Put the right id under source.spreadsheet_id with source.type: gsheet.")
     return 0
 
 
@@ -61,8 +70,8 @@ def cmd_amazon(args) -> int:
 def cmd_amazon_login(args) -> int:
     from .amazon.fetch import interactive_login
 
-    interactive_login(load_config(args.config).raw.get("amazon", {}).get("domain", "amazon.in"))
-    return 0
+    ok = interactive_login(load_config(args.config).raw.get("amazon", {}).get("domain", "amazon.in"))
+    return 0 if ok else 1
 
 
 def cmd_amazon_discover(args) -> int:

@@ -73,3 +73,76 @@ def test_return_spike_only_for_weeks_after_baseline(tmp_path):
     got = evaluate(con, AMZ, ALR, {"approved": appr}, now=datetime(2026, 9, 22, 9))  # last full week = 14-20 Sep
     assert [a.rule for a in got] == ["return_spike"]
     assert "8 approved" in got[0].detail
+
+
+# ---- delivery channels (network mocked) ----
+import json as _json
+
+import cultph.alerts as alerts_mod
+from cultph.alerts import CHANNELS, Alert, deliver
+
+A = Alert("low_review", "R1", "high", "1★ review · Gun A", "Not charging")
+
+
+class _Resp:
+    status = 200
+
+
+def _env(values):
+    return lambda name: values.get(name)
+
+
+def test_channels_skip_when_not_configured(monkeypatch):
+    monkeypatch.setattr(alerts_mod, "env", _env({}))
+    assert not CHANNELS["telegram"](A) and not CHANNELS["slack"](A) and not CHANNELS["email"](A)
+
+
+def test_telegram_and_slack_payloads(monkeypatch):
+    sent = []
+    monkeypatch.setattr(alerts_mod, "env", _env({"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID": "42",
+                                                 "SLACK_WEBHOOK_URL": "https://hooks.example/x"}))
+    monkeypatch.setattr(alerts_mod.urllib.request, "urlopen",
+                        lambda req, timeout: sent.append((req.full_url, _json.loads(req.data))) or _Resp())
+    assert CHANNELS["telegram"](A) and CHANNELS["slack"](A)
+    assert sent[0] == ("https://api.telegram.org/botT/sendMessage", {"chat_id": "42", "text": "1★ review · Gun A\nNot charging"})
+    assert sent[1][0] == "https://hooks.example/x" and "Not charging" in sent[1][1]["text"]
+
+
+def test_email(monkeypatch):
+    got = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            got["host"] = (host, port)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, u, p):
+            got["login"] = u
+
+        def send_message(self, m):
+            got["subject"], got["to"] = m["Subject"], m["To"]
+
+    monkeypatch.setattr(alerts_mod, "env", _env({"SMTP_HOST": "smtp.example", "SMTP_USER": "me@x", "SMTP_PASS": "p",
+                                                 "ALERT_EMAIL_TO": "you@x"}))
+    monkeypatch.setattr(alerts_mod.smtplib, "SMTP_SSL", FakeSMTP)
+    assert CHANNELS["email"](A)
+    assert got == {"host": ("smtp.example", 465), "login": "me@x", "subject": "[Cult alert] 1★ review · Gun A", "to": "you@x"}
+
+
+def test_failing_channel_does_not_block_others(tmp_path, monkeypatch):
+    con = store.connect(tmp_path / "a.db")
+    con.executescript(alerts_mod.SCHEMA)
+    con.execute("INSERT INTO alert_event VALUES ('low_review','R1','t','high','x','y','')")
+
+    def boom(a):
+        raise OSError("down")
+
+    monkeypatch.setitem(CHANNELS, "slack", boom)
+    monkeypatch.setitem(CHANNELS, "telegram", lambda a: True)
+    deliver(con, [A], ["slack", "telegram"])
+    assert con.execute("SELECT channels FROM alert_event").fetchone()[0] == "slack:error:OSError,telegram"

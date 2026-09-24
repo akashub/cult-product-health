@@ -48,3 +48,8 @@ def test_parse_dt():
     assert parse_dt("05/01/2026") == datetime(2026, 1, 5)  # day-first
     assert parse_dt(46023.5).date().isoformat() == "2026-01-01"  # Sheets serial
     assert parse_dt("nope") is None
+
+
+def test_clean_text_whole_number_float():
+    from cultph.normalize import clean_text
+    assert clean_text(564690.0) == "564690" and clean_text(1.5) == "1.5" and clean_text("  a  b ") == "a b"

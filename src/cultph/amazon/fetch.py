@@ -50,12 +50,48 @@ def browser(headless: bool = True, delay: tuple[float, float] = (4.0, 9.0)):
             ctx.close()
 
 
-def interactive_login(domain: str) -> None:
-    """Opens a visible browser so you can sign in once; the session is saved."""
+AUTH_COOKIES = {"at-acbin", "sess-at-acbin", "at-main", "sess-at-main"}
+
+
+def has_auth_cookie(cookies: list[dict]) -> bool:
+    return any(c.get("name") in AUTH_COOKIES and c.get("value") for c in cookies)
+
+
+def interactive_login(domain: str, timeout_s: int = 600) -> bool:
+    """Opens a visible browser on Amazon's sign-in page and waits until Amazon
+    sets its sign-in cookie (or the window is closed). No terminal input needed,
+    so it also works from scripts. Returns True when signed in."""
+    signin = (f"https://www.{domain}/ap/signin?openid.return_to=https%3A%2F%2Fwww.{domain}%2F"
+              "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
+              "&openid.assoc_handle=inflex&openid.mode=checkid_setup"
+              "&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
+              "&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
     with browser(headless=False, delay=(0, 0)) as f:
-        f.page.goto(f"https://www.{domain}/ap/signin?openid.return_to=https%3A%2F%2Fwww.{domain}%2F"
-                    "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
-                    "&openid.assoc_handle=inflex&openid.mode=checkid_setup"
-                    "&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
-                    "&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
-        input("Sign in in the browser window, then press Enter here to save the session... ")
+        ctx = f.page.context
+        if has_auth_cookie(ctx.cookies()):
+            print("Already signed in; session is saved.")
+            return True
+        f.page.goto(signin)
+        print("Sign in in the browser window (use a secondary account). It closes by itself once you're in.")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                if has_auth_cookie(ctx.cookies()):
+                    f.page.wait_for_timeout(2000)  # let Amazon finish setting cookies
+                    print("Signed in. Session saved under data/amazon_profile.")
+                    return True
+                f.page.wait_for_timeout(1000)
+            except Exception:  # noqa: BLE001 - window closed by the user
+                break
+        print("Not signed in (window closed or timed out).")
+        return False
+
+
+def check_session(domain: str, asin: str) -> str:
+    """'ok' if the review listing opens, 'signin' if the session is missing or
+    expired, 'captcha' if Amazon is challenging us."""
+    from .parse import detect_block
+
+    with browser(headless=True, delay=(0, 0)) as f:
+        final, html = f.get(f"https://www.{domain}/product-reviews/{asin}?sortBy=recent&pageNumber=1")
+    return detect_block(html, final) or "ok"
