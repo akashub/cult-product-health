@@ -23,3 +23,5 @@ __pycache__/
 
 # Private notes with internal Cult figures. Local only, never pushed.
 *.private.md
+config.private.yaml
+*.private.yaml

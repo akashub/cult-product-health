@@ -1,0 +1,52 @@
+# Example config with generic names. Copy to config.private.yaml (gitignored)
+# and fill in the real tab names, column headers and SKU master.
+source:
+  type: xlsx                       # or: gsheet
+  path: data/sample.xlsx           # `uv run python tests/make_fixture.py` creates this
+  # spreadsheet_id: "<id from `cultph sheets`>"
+
+dayfirst: true
+
+tabs:
+  tickets:
+    name: Tickets
+    columns: {ticket_id: Ticket Id, created_at: Created, month_label: Month, platform: Platform,
+              order_id: Order ID, model: Model, l1: L1, l2: L2, l3: L3, subject: Subject}
+  approved:
+    name: Approved
+    columns: {event_date: Date, month_label: Month, order_id: Order ID, batch: Batch, model: Model,
+              sku: SKU, amount: Amount, issue: Issue, mode: Mode, channel: Channel, awb: AWB, warehouse: Warehouse}
+  pending:
+    name: Pending
+    columns: {order_id: Order ID, sku: SKU, model: Model, created_at: Created, month_label: Month,
+              reason: Reason, created_by: Created By, comment: Comment}
+  wms:
+    name: Warehouse
+    columns: {created_at: Created, month_label: Month, channel_name: Channel, channel_type: Channel Type,
+              return_type: Return Type, return_sub_type: Return Sub Type, reason: Reason, order_id: Order ID,
+              item_code: Item Code, sku: SKU, model: Model, facility: Facility, status: Status}
+
+product_issue_l2: [Product]      # L2 values that mean "fault with the product"
+not_mentioned: [Not Mentioned]
+
+platform_map:                    # spelling variants -> canonical platform
+  "1P": Cult Store
+  "No details": Unknown
+
+channel_prefixes:                # warehouse channel name prefix -> platform
+  - [STORE, Cult Store]
+  - [MARKET, Marketplace]
+
+dashboard_check:                 # cells in the sheet's own pivot to reconcile against
+  tab: Dashboard
+  approved_range: B2:B4
+  total_range: C2:C4
+  months: [1, 2, 3]
+
+thresholds:
+  min_mapping_coverage: 0.98
+  max_month_label_mismatch: 0
+
+products:                        # SKU code is authoritative; aliases = spellings seen
+  - {name: Sample Gun A, kind: gun, skus: [SKU-A1], aliases: [Gun A, Sample Gun A Blue]}
+  - {name: Sample Foot B, kind: foot, skus: [SKU-B1, SKU-B2], aliases: [Foot B]}

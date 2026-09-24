@@ -4,6 +4,29 @@ A web app for Cult's Massagers and Scales business. It watches every SKU on e-co
 
 ---
 
+## 0. Build decisions (personal-use version)
+
+This is being built for personal use, so it is deliberately simple.
+
+- **Stack:**
+  - Python 3.12 managed with uv, with a single **SQLite** file under `data/`.
+  - A **Streamlit** dashboard, and a CLI (`cultph sync`).
+  - This replaces the Next.js, Postgres and Auth.js stack in §3, which can come later if it ever needs to be multi-user.
+- **Google Sheets:** `gspread` with desktop OAuth. The Gmail login happens once and the token is cached locally. The xlsx reader and the Sheets reader return the same table shape.
+- **Amazon reviews:** our **own parser** (Playwright). This is option D in §5, which is acceptable for personal, low-volume use. It polls gently (about hourly with jitter), and any login session is stored under `data/`, never committed.
+- **Public repo hygiene:** real tab and column names and the SKU master live in `config.private.yaml` (gitignored). The repo ships `config.example.yaml` and a synthetic fixture instead.
+- **Publish gate:** a sync writes to a staging DB. It is swapped in as the live DB only if the judge doesn't fail it.
+
+### Phase status
+| Phase | Status |
+|---|---|
+| 1. Sheets and returns: parser, SQLite, judge, dashboard | ✅ done. The real workbook reconciles exactly with the sheet's own Dashboard across all months; 0 rows rejected; 100% of named models mapped |
+| 2. Amazon ratings and reviews (own parser) | ⏳ next: feasibility spike on 1 ASIN, then scraper and the 4.1 calculator |
+| 3. AI review classification with a judge | ⏳ |
+| 4. Alerts and scheduling | ⏳ |
+
+---
+
 ## 1. Goals (from the brief)
 
 | # | Requirement | How this plan covers it |
