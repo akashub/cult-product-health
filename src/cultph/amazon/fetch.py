@@ -71,7 +71,9 @@ def browser(headless: bool = True, delay: tuple[float, float] = (4.0, 9.0)):
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             str(PROFILE_DIR), headless=headless, locale="en-IN", user_agent=UA,
-            viewport={"width": 1366, "height": 900})
+            viewport={"width": 1366, "height": 900},
+            # containers give /dev/shm only 64 MB, which crashes heavy pages; use /tmp instead
+            args=["--disable-dev-shm-usage"])
         try:
             # a profile copied between OSes can't decrypt its cookies; fall back to the exported session
             if SESSION_FILE.exists() and not has_auth_cookie(ctx.cookies()):
