@@ -76,7 +76,8 @@ def cmd_flipkart(args) -> int:
     from .flipkart.run import poll
 
     cfg = load_config(args.config)
-    s = poll(cfg.raw.get("flipkart", {}), backfill=args.backfill, headless=not args.headed)
+    s = poll(cfg.raw.get("flipkart", {}), backfill=args.backfill, headless=not args.headed,
+             variant_map=cfg.raw.get("amazon", {}).get("variant_map"))
     print(f"flipkart snapshots: {s.snapshots}  new reviews: {len(s.new_reviews)}")
     for p in s.problems:
         print(f" ✘ {p}")
@@ -119,8 +120,10 @@ def cmd_label(args) -> int:
         print("no ai.taxonomy in config")
         return 1
     con = amazon_store.connect()
-    todo = label_store.pending_reviews(con, PROMPT_VERSION, args.limit)
-    print(f"{len(todo)} reviews to label")
+    cap = args.limit or int(ai.get("max_per_run", 200))
+    total = len(label_store.pending_reviews(con, PROMPT_VERSION))
+    todo = label_store.pending_reviews(con, PROMPT_VERSION, cap)
+    print(f"{total} reviews waiting; labelling {len(todo)} this run (low ratings and newest first; cap {cap})")
     labeler = Labeler(taxonomy, ai.get("classifier_model", "claude-haiku-4-5-20251001"),
                       ai.get("judge_model", "claude-sonnet-5"))
     counts = {"auto": 0, "queue": 0, "error": 0}

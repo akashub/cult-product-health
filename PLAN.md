@@ -30,6 +30,9 @@ This is being built for personal use, so it is deliberately simple.
 - **No login and no bot wall.** The product page has schema.org JSON-LD with the rating value, rating count, review count and a link to the reviews page.
 - **The reviews page (sorted by latest) shows *exact* per-star counts,** so the 4.1-style math on Flipkart is exact rather than a range. The judge checks that the star counts add up to the ratings total.
 - The page is React Native Web, with no stable class names and no review IDs. Reviews are parsed from the visible text pattern, and each gets a stable ID made by hashing the listing, reviewer, city, title and body (reviewer names are not stored). Dates are relative ("3 days ago", "2 months ago"), so each review records how precise its date is.
+- Flipkart's displayed rating equals the exact mean rounded to one decimal on every listing checked, so the "shows 4.1 means a mean of 4.05 or more" rule holds there too.
+- Volume observed: about 160 new Flipkart reviews a month across the listings (Volt and Revive the busiest). The AI labeller is capped at `ai.max_per_run` reviews per run (default 200), taking the lowest ratings and newest first, so a backlog after a backfill clears over several runs.
+- Some listings occasionally render one review repeated. Repeats are de-duplicated, and if page 1 yields fewer than 5 distinct reviews while the header says 10 or more, the run warns and saves the page.
 
 ### Phase status
 | Phase | Status |

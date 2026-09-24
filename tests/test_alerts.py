@@ -17,9 +17,10 @@ def snap(con, asin, avg, hist, at):
                 (asin, asin, "Gun A", at, avg, 100, hist[5], hist[4], hist[3], hist[2], hist[1], 0, 0))
 
 
-def review(con, rid, rating, rdate, seen):
-    store.upsert_reviews(con, "A1", "Gun A", [{"review_id": rid, "rating": rating, "title": "t", "body": "b",
-                                              "review_date": rdate, **BASE}], "x")
+def review(con, rid, rating, rdate, seen, asin="A1", source="product_page", platform="amazon", precision="day"):
+    store.upsert_reviews(con, asin, "Gun A", [{"review_id": rid, "rating": rating, "title": "t", "body": "b",
+                                               "review_date": rdate, "date_precision": precision, **BASE}],
+                         source, asin, platform)
     con.execute("UPDATE review SET first_seen_at = ? WHERE review_id = ?", (seen, rid))
 
 
@@ -31,7 +32,9 @@ def test_first_run_is_baseline_only(tmp_path):
 
 def test_new_recent_low_review_alerts_once(tmp_path):
     con = store.connect(tmp_path / "a.db")
+    review(con, "SEED", 5, "2026-09-01", "2026-09-24T09:00:00")                 # listing known before baseline
     evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10))                      # baseline 10:00
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10, 30))                  # registers source key
     review(con, "NEW", 1, "2026-09-24", "2026-09-24T11:00:00")                  # posted today, seen after baseline
     review(con, "BACKFILL", 1, "2025-01-10", "2026-09-24T11:00:00")            # seen after baseline but old
     review(con, "GOOD", 5, "2026-09-24", "2026-09-24T11:00:00")
@@ -42,7 +45,9 @@ def test_new_recent_low_review_alerts_once(tmp_path):
 
 def test_safety_label_is_urgent_and_first(tmp_path):
     con = store.connect(tmp_path / "a.db")
+    review(con, "SEED", 5, "2026-09-01", "2026-09-24T09:00:00")
     evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10))
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10, 30))
     review(con, "HOT", 2, "2026-09-24", "2026-09-24T11:00:00")
     label_store.ensure(con)
     con.execute("INSERT INTO review_label (review_id, prompt_version, severity, issues, status) VALUES "
@@ -154,3 +159,46 @@ def test_resolve_channels(monkeypatch):
     monkeypatch.setattr(alerts_mod, "desktop_supported", lambda: False)
     assert alerts_mod.resolve_channels("auto") == ["slack"]
     assert alerts_mod.resolve_channels(["email"]) == ["email"]
+
+
+
+def test_new_platform_or_first_login_walk_does_not_flood(tmp_path):
+    con = store.connect(tmp_path / "a.db")
+    review(con, "SEED", 5, "2026-09-01", "2026-09-24T09:00:00")
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10))                       # global baseline
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10, 30))
+    # Flipkart added later: 30 recent low reviews appear at once
+    for i in range(30):
+        review(con, f"FK{i}", 1, "2026-09-23", "2026-09-24T11:00:00", asin="P1", source="flipkart:recent:p1",
+               platform="flipkart")
+    # first Amazon listing walk after login: old + recent reviews under a new source kind
+    for i in range(30):
+        review(con, f"L{i}", 2, "2026-09-22", "2026-09-24T11:00:00", source="listing:recent:all")
+    assert evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 12)) == []          # all treated as history
+    # afterwards, genuinely new reviews on those sources do alert
+    review(con, "FKNEW", 1, "2026-09-24", "2026-09-24T13:00:00", asin="P1", source="flipkart:recent:p1",
+           platform="flipkart")
+    review(con, "FKOLDISH", 1, "2026-09-24", "2026-09-24T13:00:00", asin="P1", source="flipkart:recent:p1",
+           platform="flipkart", precision="month")                               # imprecise date: no alert
+    got = evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 14))
+    assert [a.object_key for a in got] == ["FKNEW"]
+
+
+def test_first_labelling_run_does_not_flood_safety(tmp_path):
+    con = store.connect(tmp_path / "a.db")
+    for i in range(5):
+        review(con, f"OLD{i}", 2, "2026-09-20", "2026-09-24T09:00:00")
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10))
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10, 30))
+    label_store.ensure(con)
+    for i in range(5):  # key added later; old reviews labelled 'safety' in one go
+        con.execute("INSERT INTO review_label (review_id, prompt_version, severity, issues, status) VALUES "
+                    f"('OLD{i}', 'v1', 'safety', '[]', 'auto')")
+    assert evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 12)) == []
+
+
+def test_flipkart_target_uses_exact_mean(tmp_path):
+    from cultph.alerts import _below_target
+    snaps = pd.DataFrame([{"asin": "P1", "platform": "flipkart", "p5": 55, "p4": 22, "p3": 9, "p2": 3, "p1": 11,
+                           "avg_rating": 4.1, "hist_avg_min": 4.049, "hist_avg_max": 4.049, "c5": 1, "captured_at": "t"}])
+    assert _below_target(snaps, 4.05) == {"P1": True}

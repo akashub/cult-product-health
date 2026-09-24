@@ -159,3 +159,13 @@ def test_real_sdk_falls_back_to_tool_use_on_schema_400():
     assert lb.label(REVIEW)["status"] == "auto"
     # first call per model tries structured output once, then tool mode sticks
     assert sum("output_config" in b for b in sent) == 2 and sum("tools" in b for b in sent) == 4
+
+
+def test_pending_orders_low_ratings_and_newest_first(tmp_path):
+    con = amazon_store.connect(tmp_path / "a.db")
+    base = {"country": None, "verified": True, "variant": None, "helpful_votes": 0}
+    rows = [("R5new", 5, "2026-09-20"), ("R1old", 1, "2026-01-01"), ("R2new", 2, "2026-09-21"), ("R4", 4, "2026-09-22")]
+    amazon_store.upsert_reviews(con, "A1", "Gun A", [{"review_id": r, "rating": s, "title": "t", "body": "b",
+                                                      "review_date": d, **base} for r, s, d in rows], "x")
+    got = [r["review_id"] for r in label_store.pending_reviews(con, PROMPT_VERSION, 3)]
+    assert got == ["R2new", "R1old", "R4"]

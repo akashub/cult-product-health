@@ -27,6 +27,7 @@ class RunSummary:
     new_reviews: list[tuple[str, str]] = field(default_factory=list)  # (asin, review_id)
     problems: list[str] = field(default_factory=list)
     login_required: bool = False
+    no_ratings: int = 0  # listings that exist but have no customer ratings yet
 
 
 def _save_raw(name: str, html: str) -> None:

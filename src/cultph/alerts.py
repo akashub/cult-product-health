@@ -60,7 +60,10 @@ def _latest_snapshots(con) -> pd.DataFrame:
 def _below_target(snaps: pd.DataFrame, target: float) -> dict[str, bool]:
     out = {}
     for r in snaps.groupby("asin").tail(1).itertuples():
-        _, hi, _ = mean_range({5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}, r.avg_rating)
+        if getattr(r, "platform", "amazon") == "flipkart" and pd.notna(getattr(r, "c5", None)):
+            hi = r.hist_avg_min  # exact mean from exact star counts
+        else:
+            _, hi, _ = mean_range({5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}, r.avg_rating)
         out[r.asin] = hi < target
     return out
 
@@ -84,22 +87,45 @@ def evaluate(con, amazon_cfg: dict, alert_cfg: dict, sheet_tables: dict[str, pd.
 
     since = (now.date() - timedelta(days=recent_days)).isoformat()
     alerts: list[Alert] = []
+    stamp = now.isoformat(timespec="seconds")
+
+    # Per-source baselines: the first time a listing/source appears (a new platform, the
+    # first review walk after an Amazon login, ...) its reviews are history, not news.
+    key_base = _state(con, "review_baselines", {})
+
+    def key_of(platform, pool, source) -> str:
+        return f"{platform or 'amazon'}:{pool}:{(source or '').split(':')[0]}"
+
+    for plat, pool, src in con.execute(
+            "SELECT DISTINCT platform, COALESCE(parent_asin, asin), source FROM review").fetchall():
+        key_base.setdefault(key_of(plat, pool, src), stamp)  # unseen source: everything so far is history
+
+    def is_new(platform, pool, source, first_seen, precision) -> bool:
+        key = key_of(platform, pool, source)
+        # only day-precise dates can prove a review is recent
+        return first_seen > key_base[key] and first_seen > baseline and (precision or "day") == "day"
+
+    review_cols = ("SELECT r.review_id, r.asin, COALESCE(r.product, 'pool ' || r.parent_asin), r.rating, r.title, "
+                   "r.body, r.review_date, r.platform, COALESCE(r.parent_asin, r.asin), r.source, r.first_seen_at, "
+                   "r.date_precision")
 
     # new 1-2 star reviews
-    for rid, asin, prod, rating, title, body, rdate in con.execute(
-            "SELECT review_id, asin, COALESCE(product, 'pool ' || parent_asin), rating, title, body, review_date "
-            "FROM review WHERE rating <= 2 AND first_seen_at > ? AND review_date >= ?", (baseline, since)):
-        alerts.append(Alert("low_review", rid, "high", f"{rating}★ review · {prod}",
-                            f"{title or ''} — {(body or '')[:280]} ({rdate}, {asin})"))
+    for rid, asin, prod, rating, title, body, rdate, plat, pool, src, seen, prec in con.execute(
+            review_cols + " FROM review r WHERE r.rating <= 2 AND r.review_date >= ?", (since,)).fetchall():
+        if is_new(plat, pool, src, seen, prec):
+            alerts.append(Alert("low_review", rid, "high", f"{rating}★ review · {prod} ({plat or 'amazon'})",
+                                f"{title or ''} — {(body or '')[:280]} ({rdate}, {asin})"))
 
     # safety issues found by the labeller
     if has_labels:
-        for rid, prod, rating, body, issues in con.execute(
-                "SELECT r.review_id, COALESCE(r.product, 'pool ' || r.parent_asin), r.rating, r.body, l.issues "
-                "FROM review_label l JOIN review r USING (review_id) "
-                "WHERE l.severity = 'safety' AND r.first_seen_at > ? AND r.review_date >= ?", (baseline, since)):
-            quotes = "; ".join(f"“{i['evidence']}”" for i in json.loads(issues or "[]"))
-            alerts.append(Alert("safety", rid, "urgent", f"SAFETY · {prod} ({rating}★)", quotes or (body or "")[:280]))
+        for rid, asin, prod, rating, title, body, rdate, plat, pool, src, seen, prec, issues in con.execute(
+                review_cols + ", l.issues FROM review_label l JOIN review r USING (review_id) "
+                "WHERE l.severity = 'safety' AND r.review_date >= ?", (since,)).fetchall():
+            if is_new(plat, pool, src, seen, prec):
+                quotes = "; ".join(f"“{i['evidence']}”" for i in json.loads(issues or "[]"))
+                alerts.append(Alert("safety", rid, "urgent", f"SAFETY · {prod} ({rating}★, {plat or 'amazon'})",
+                                    quotes or (body or "")[:280]))
+    _set_state(con, "review_baselines", key_base)
 
     # displayed rating moved between the last two snapshots
     if not snaps.empty:

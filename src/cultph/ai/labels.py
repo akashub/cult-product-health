@@ -70,7 +70,7 @@ def check_label(label: Label, r: dict, codes: set[str]) -> list[str]:
     return errs
 
 
-CLASSIFY_PROMPT = """You label one customer review of a {category} product sold on Amazon India.
+CLASSIFY_PROMPT = """You label one customer review of a {category} product sold online in India (Amazon, Flipkart, ...).
 
 Issue taxonomy:
 {taxonomy}

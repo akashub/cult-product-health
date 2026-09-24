@@ -32,7 +32,7 @@ def pending_reviews(con, prompt_version: str, limit: int | None = None) -> list[
     rows = con.execute(
         "SELECT r.review_id, r.rating, r.title, r.body, l.body_hash FROM review r "
         "LEFT JOIN review_label l ON l.review_id = r.review_id AND l.prompt_version = ? "
-        "ORDER BY r.first_seen_at DESC", (prompt_version,)).fetchall()
+        "ORDER BY (r.rating <= 3) DESC, r.review_date DESC, r.first_seen_at DESC", (prompt_version,)).fetchall()
     out = []
     for rid, rating, title, body, old_hash in rows:
         r = {"review_id": rid, "rating": rating, "title": title, "body": body}
