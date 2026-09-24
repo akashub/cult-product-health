@@ -115,8 +115,8 @@ with st.sidebar:
             st.markdown(f"**{c.check}** — {c.status}  \n{c.detail}")
 
 st.title("Cult Product Health")
-st.caption("Phase 1 · returns, exchanges and support tickets from the shared sheet. "
-           "Return % needs units-sold data (not in the sheet yet).")
+st.caption("Returns, exchanges and tickets from the shared sheet · Amazon and Flipkart ratings and reviews · "
+           "AI issue labels with a judge. Every number links back to its source rows.")
 
 tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
     ["Overview", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",

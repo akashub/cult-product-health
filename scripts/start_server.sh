@@ -17,8 +17,9 @@ if [ -d seed ] && [ ! -f data/.seeded ]; then
   echo "seeded data volume from bundled snapshot"
 fi
 if [ -n "$CULTPH_SCHEDULE_MINUTES" ]; then
-  uv run --no-dev cultph watch --every "$CULTPH_SCHEDULE_MINUTES" >> data/watch.log 2>&1 &
-  echo "scheduler started: every $CULTPH_SCHEDULE_MINUTES min (log: data/watch.log)"
+  # output goes to the service logs and to data/watch.log on the volume
+  (uv run --no-dev cultph watch --every "$CULTPH_SCHEDULE_MINUTES" 2>&1 | tee -a data/watch.log) &
+  echo "scheduler started: every $CULTPH_SCHEDULE_MINUTES min"
 fi
 exec uv run --no-dev streamlit run app/dashboard.py \
   --server.port "${PORT:-8501}" --server.address 0.0.0.0 --server.headless true \
