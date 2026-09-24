@@ -124,20 +124,32 @@ def cmd_label(args) -> int:
     total = len(label_store.pending_reviews(con, PROMPT_VERSION))
     todo = label_store.pending_reviews(con, PROMPT_VERSION, cap)
     print(f"{total} reviews waiting; labelling {len(todo)} this run (low ratings and newest first; cap {cap})")
+    provider = ai.get("provider", "anthropic")
     labeler = Labeler(taxonomy, ai.get("classifier_model", "claude-haiku-4-5-20251001"),
-                      ai.get("judge_model", "claude-sonnet-5"))
+                      ai.get("judge_model", "claude-sonnet-5"), provider=provider)
+    print(f"provider {provider}: classifier {labeler.classifier_model}, judge {labeler.judge_model}, "
+          f"{args.workers} parallel workers")
     counts = {"auto": 0, "queue": 0, "error": 0}
-    for i, r in enumerate(todo, 1):
-        try:
-            lab = labeler.label(r)
-        except Exception as e:  # noqa: BLE001 - one bad call must not stop the batch
-            counts["error"] += 1
-            print(f"  ✘ {r['review_id']}: {e}")
-            continue
-        label_store.save_label(con, lab)
-        con.commit()
-        counts[lab["status"]] += 1
-        print(f"  [{i}/{len(todo)}] {r['review_id']} {lab['status']:<5} {lab['codes'] or '-'}")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # API calls run in parallel; every database write stays on this thread
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        futures = {pool.submit(labeler.label, r): r for r in todo}
+        for i, fut in enumerate(as_completed(futures), 1):
+            r = futures[fut]
+            try:
+                lab = fut.result()
+            except Exception as e:  # noqa: BLE001 - one bad call must not stop the batch
+                counts["error"] += 1
+                print(f"  ✘ {r['review_id']}: {type(e).__name__}: {str(e)[:120]}")
+                continue
+            label_store.save_label(con, lab)
+            counts[lab["status"]] += 1
+            if i % 25 == 0 or i == len(todo):
+                con.commit()
+                print(f"  [{i}/{len(todo)}] auto {counts['auto']} queue {counts['queue']} errors {counts['error']}")
+    con.commit()
     audits = label_store.sample_audits(con, PROMPT_VERSION, ai.get("audit_rate", 0.10), ai.get("audit_min_per_product", 3))
     con.commit()
     print(f"auto {counts['auto']}  queued for review {counts['queue']}  errors {counts['error']}  "
@@ -185,10 +197,12 @@ def cmd_run(args) -> int:
     from .config import env
 
     steps = [("sync", cmd_sync), ("amazon", cmd_amazon), ("flipkart", cmd_flipkart)]
-    if env("ANTHROPIC_API_KEY"):
+    provider = load_config(args.config).raw.get("ai", {}).get("provider", "anthropic")
+    key_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    if env(key_name):
         steps.append(("label", cmd_label))
     else:
-        print("(skipping label: no ANTHROPIC_API_KEY)")
+        print(f"(skipping label: no {key_name})")
     steps.append(("alerts", cmd_alerts))
     failed = []
     for name, fn in steps:
@@ -285,19 +299,20 @@ def main(argv=None) -> int:
     d.set_defaults(fn=cmd_amazon_discover)
     lb = sub.add_parser("label")
     lb.add_argument("--limit", type=int)
+    lb.add_argument("--workers", type=int, default=4, help="parallel API calls")
     lb.set_defaults(fn=cmd_label)
     al = sub.add_parser("alerts")
     al.add_argument("--test", action="store_true", help="send a test message on each configured channel")
     al.set_defaults(fn=cmd_alerts)
     r = sub.add_parser("run")
-    r.set_defaults(fn=cmd_run, asin=None, backfill=False, headed=False, limit=None)
+    r.set_defaults(fn=cmd_run, asin=None, backfill=False, headed=False, limit=None, workers=4)
     sub.add_parser("setup").set_defaults(fn=cmd_setup)
     dr = sub.add_parser("doctor")
     dr.add_argument("--live", action="store_true", help="also test Amazon, AI and Google connections for real")
     dr.set_defaults(fn=cmd_doctor)
     w = sub.add_parser("watch")
     w.add_argument("--every", type=int, default=60, help="minutes between runs")
-    w.set_defaults(fn=cmd_watch, asin=None, backfill=False, headed=False, limit=None)
+    w.set_defaults(fn=cmd_watch, asin=None, backfill=False, headed=False, limit=None, workers=4)
     sc = sub.add_parser("schedule")
     sc.add_argument("--every", type=int, default=60, help="minutes between runs")
     sc.set_defaults(fn=cmd_schedule)

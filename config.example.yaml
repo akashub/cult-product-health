@@ -70,6 +70,7 @@ amazon:
     B000000000: Sample Gun A
 
 ai:
+  provider: anthropic              # or openai (then set OPENAI_API_KEY and OpenAI model names)
   classifier_model: claude-haiku-4-5-20251001
   judge_model: claude-sonnet-5
   max_per_run: 200                 # cap per run (2 API calls each); a backlog clears over several runs

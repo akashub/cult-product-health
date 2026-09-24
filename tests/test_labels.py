@@ -169,3 +169,23 @@ def test_pending_orders_low_ratings_and_newest_first(tmp_path):
                                                       "review_date": d, **base} for r, s, d in rows], "x")
     got = [r["review_id"] for r in label_store.pending_reviews(con, PROMPT_VERSION, 3)]
     assert got == ["R2new", "R1old", "R4"]
+
+
+
+class FakeOpenAI:
+    """Mimics client.responses.parse(...).output_parsed."""
+
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.calls = []
+        self.responses = self
+
+    def parse(self, model, input, text_format):
+        self.calls.append((model, text_format.__name__))
+        return SimpleNamespace(output_parsed=self.outputs.pop(0))
+
+
+def test_openai_provider_path():
+    fake = FakeOpenAI([GOOD, Verdict(verdict="agree", reason="ok")])
+    lab = Labeler(TAX, "gpt-5.6-terra", "gpt-5.6-terra", client=fake, provider="openai").label(REVIEW)
+    assert lab["status"] == "auto" and fake.calls == [("gpt-5.6-terra", "Label"), ("gpt-5.6-terra", "Verdict")]

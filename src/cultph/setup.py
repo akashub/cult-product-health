@@ -13,7 +13,8 @@ from .config import DATA_DIR, ROOT, env, load_config
 ENV_FILE = DATA_DIR / ".env"
 
 SECRETS = [
-    ("ANTHROPIC_API_KEY", "Anthropic API key (AI review labels)", True),
+    ("ANTHROPIC_API_KEY", "Anthropic API key (AI review labels, if ai.provider is anthropic)", True),
+    ("OPENAI_API_KEY", "OpenAI API key (AI review labels, if ai.provider is openai)", True),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token (alerts)", True),
     ("TELEGRAM_CHAT_ID", "Telegram chat id", False),
     ("SLACK_WEBHOOK_URL", "Slack incoming webhook URL (alerts)", True),
@@ -129,8 +130,12 @@ def checks(live: bool = False) -> list[tuple[str, str, str, str]]:
     rows.append((OK if signed else MISSING, "Amazon sign-in (full review list)", "session saved" if signed else "not signed in",
                  "" if signed else "uv run cultph amazon-login"))
 
-    key = env("ANTHROPIC_API_KEY")
-    rows.append((OK if key else MISSING, "Anthropic API key", "set" if key else "not set", "" if key else "uv run cultph setup"))
+    ai = cfg.raw.get("ai", {})
+    provider = ai.get("provider", "anthropic")
+    key_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    key = env(key_name)
+    rows.append((OK if key else MISSING, f"AI key ({provider})", f"{key_name} {'set' if key else 'not set'}",
+                 "" if key else "uv run cultph setup"))
 
     from .alerts import configured_channels
 
@@ -168,7 +173,7 @@ def live_checks(cfg, key, signed, chromium) -> list[tuple[str, str, str, str]]:
 
             ai = cfg.raw.get("ai", {})
             lab = Labeler(ai.get("taxonomy", []), ai.get("classifier_model", "claude-haiku-4-5-20251001"),
-                          ai.get("judge_model", "claude-sonnet-5")).label(
+                          ai.get("judge_model", "claude-sonnet-5"), provider=ai.get("provider", "anthropic")).label(
                 {"review_id": "doctor", "rating": 1, "title": "Stopped working",
                  "body": "The massager stopped charging after one week and makes a loud rattling noise."})
             rows.append((OK, "LIVE AI labelling", f"{lab['status']}: {lab['codes'] or '-'} (judge {lab['judge_verdict']})", ""))

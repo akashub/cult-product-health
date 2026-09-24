@@ -99,19 +99,22 @@ Say "unsure" if the review is ambiguous."""
 
 class Labeler:
     def __init__(self, taxonomy: list[dict], classifier_model: str, judge_model: str, client=None,
-                 category: str = "massager / weighing scale"):
+                 category: str = "massager / weighing scale", provider: str = "anthropic"):
         self.taxonomy = taxonomy
         self.codes = {t["code"] for t in taxonomy}
         self.classifier_model = classifier_model
         self.judge_model = judge_model
         self.category = category
-        self.client = client or make_client()
+        self.provider = provider
+        self.client = client or make_client(provider=provider)
         self._tool_mode: set[str] = set()
 
     def _parse(self, model: str, prompt: str, schema):
         """Structured output first; if the API rejects the schema (400), fall back to
         a forced tool call with the same schema, and keep using it for this model."""
         messages = [{"role": "user", "content": prompt}]
+        if self.provider == "openai":
+            return self.client.responses.parse(model=model, input=messages, text_format=schema).output_parsed
         if model not in self._tool_mode:
             try:
                 msg = self.client.messages.parse(model=model, max_tokens=1024, output_format=schema, messages=messages)
@@ -148,7 +151,15 @@ class Labeler:
         }
 
 
-def make_client(http_client=None):
+def make_client(http_client=None, provider: str = "anthropic"):
+    if provider == "openai":
+        import openai
+
+        key = env("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("No OPENAI_API_KEY: run `cultph setup` or put it in data/.env")
+        return openai.OpenAI(api_key=key, http_client=http_client) if http_client else openai.OpenAI(api_key=key)
+
     import anthropic
 
     key = env("ANTHROPIC_API_KEY")
