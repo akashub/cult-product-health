@@ -49,3 +49,12 @@ thresholds:
 products:                        # SKU code is authoritative; aliases = spellings seen
   - {name: Sample Gun A, kind: gun, skus: [SKU-A1], aliases: [Gun A, Sample Gun A Blue]}
   - {name: Sample Foot B, kind: foot, skus: [SKU-B1, SKU-B2], aliases: [Foot B]}
+
+amazon:
+  domain: amazon.in
+  target_rating: 4.1
+  target_mode: displayed          # displayed: star shown as 4.1 (mean >= 4.05); exact: mean >= 4.1
+  max_recent_pages: 10             # 'most recent' pages per poll; stops early once caught up
+  delay_seconds: [4, 9]            # random pause between requests
+  asins:                           # ASIN -> product name (`cultph amazon-discover "<query>"` helps)
+    B000000000: Sample Gun A

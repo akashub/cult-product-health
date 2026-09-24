@@ -8,6 +8,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+import sqlite3
+
+from cultph.amazon.rating import effective_target, plan as rating_plan
+from cultph.amazon.store import AMAZON_DB
+from cultph.config import load_config
 from cultph.db import LIVE_DB, last_runs, read_table
 from cultph.metrics import breakdown, rows_for
 
@@ -84,8 +89,82 @@ st.title("Cult Product Health")
 st.caption("Phase 1 · returns, exchanges and support tickets from the shared sheet. "
            "Return % needs units-sold data (not in the sheet yet).")
 
-tab_over, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
-    ["Overview", "Returns & exchanges", "Support tickets", "Pending verification", "Warehouse returns", "Data quality"])
+tab_over, tab_amz, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
+    ["Overview", "Amazon ratings & reviews", "Returns & exchanges", "Support tickets", "Pending verification",
+     "Warehouse returns", "Data quality"])
+
+
+@st.cache_data(ttl=60)
+def load_amazon(name: str) -> pd.DataFrame:
+    with sqlite3.connect(AMAZON_DB) as con:
+        return pd.read_sql(f'SELECT * FROM "{name}"', con)
+
+
+with tab_amz:
+    amz_cfg = load_config().raw.get("amazon", {})
+    shown_target = float(amz_cfg.get("target_rating", 4.1))
+    mode = amz_cfg.get("target_mode", "displayed")
+    target = effective_target(shown_target, mode)
+    if not AMAZON_DB.exists():
+        st.info("No Amazon data yet. Run `uv run cultph amazon`.")
+    else:
+        snaps, reviews, runs_log = load_amazon("rating_snapshot"), load_amazon("review"), load_amazon("scrape_run")
+        latest = snaps.sort_values("captured_at").groupby("asin").tail(1)
+        pools = latest.groupby("parent_asin")["asin"].apply(list).to_dict()
+        rows = []
+        for r in latest.itertuples():
+            hist = {5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}
+            pl = rating_plan(int(r.total_ratings), hist, target)
+            rows.append({
+                "asin": r.asin, "product": r.product, "displayed": r.avg_rating, "ratings": r.total_ratings,
+                "simple_avg": f"{pl['avg_range'][0]:.2f}–{pl['avg_range'][1]:.2f}",
+                f"5★ needed to show {shown_target}": "0" if pl["five_star_needed"] == (0, 0) else f"{pl['five_star_needed'][0]}–{pl['five_star_needed'][1]}",
+                "1★ it can absorb": f"{pl['one_star_absorbable'][0]}–{pl['one_star_absorbable'][1]}",
+                "5★ share now": r.p5 / 100, "5★ share to hold": pl["five_star_share_needed"],
+                "shares ratings with": ", ".join(a for a in pools.get(r.parent_asin, []) if a != r.asin),
+                "stored reviews (pool)": int(reviews["asin"].isin(pools.get(r.parent_asin, [r.asin])).sum()),
+                "as of": r.captured_at,
+            })
+        table = pd.DataFrame(rows).sort_values("displayed")
+        st.markdown(f"**Latest per ASIN · target: show {shown_target}★** "
+                    f"({'weighted mean ≥ ' + str(target) if mode == 'displayed' else 'exact mean ≥ ' + str(target)})")
+        st.caption("ASINs in the same variation family share one rating pool on Amazon (same parent ASIN).")
+        st.dataframe(table, hide_index=True, width="stretch", column_config={
+            "5★ share now": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+            "5★ share to hold": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
+        with st.expander("How the 4.1 numbers are calculated"):
+            st.markdown(
+                f"""The star histogram on Amazon is its **weighted** distribution, not raw counts (small listings show
+shares that can't come from whole ratings). Its weighted mean A matches the displayed rating. The percentages are rounded, so
+A is known only within a range, and every answer is shown as *best–worst*. N = global ratings, T = {target}
+(Amazon shows one decimal, so a mean of {target} or more displays as {shown_target}).
+- 5★ needed: `ceil((T − A)·N / (5 − T))`
+- 1★ it can absorb: `floor((A − T)·N / (T − 1))`
+- 5★ share to hold: the share of new ratings that must be 5★ (with the rest in today's 1–4★ mix) for new ratings to average T.
+
+New ratings are weighted by Amazon too (by recency, verified purchase and so on), so treat these as estimates to steer by. Once the
+review listing is available (after login), the per-star filters give raw counts, which can tighten this.""")
+
+        pick = st.selectbox("ASIN", table["asin"], format_func=lambda a: f"{a} · {table.set_index('asin').loc[a, 'product']}")
+        a, b = st.columns(2)
+        s_one = snaps[snaps["asin"] == pick].sort_values("captured_at")
+        with a:
+            st.markdown("**Rating over time**")
+            st.line_chart(s_one.set_index("captured_at")[["avg_rating"]])
+        with b:
+            last = s_one.iloc[-1]
+            st.markdown("**Star histogram (latest, %)**")
+            st.bar_chart(pd.Series({f"{k}★": last[f"p{k}"] for k in (5, 4, 3, 2, 1)}))
+        pool = pools.get(latest.set_index("asin").loc[pick, "parent_asin"], [pick])
+        rv = reviews[reviews["asin"].isin(pool)].sort_values("review_date", ascending=False)
+        stars = st.multiselect("Stars", [1, 2, 3, 4, 5], default=[1, 2], key="amz_stars")
+        if stars:
+            rv = rv[rv["rating"].isin(stars)]
+        st.markdown(f"**Stored reviews** ({len(rv)} shown)")
+        st.dataframe(rv[["review_date", "rating", "title", "body", "verified", "variant", "helpful_votes",
+                         "first_seen_at", "source", "review_id"]], hide_index=True, width="stretch")
+        with st.expander("Scrape log"):
+            st.dataframe(runs_log.sort_values("at", ascending=False).head(100), hide_index=True, width="stretch")
 
 with tab_over:
     k = st.columns(4)

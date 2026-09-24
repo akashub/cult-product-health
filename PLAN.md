@@ -17,11 +17,20 @@ This is being built for personal use, so it is deliberately simple.
 - **Public repo hygiene:** real tab and column names and the SKU master live in `config.private.yaml` (gitignored). The repo ships `config.example.yaml` and a synthetic fixture instead.
 - **Publish gate:** a sync writes to a staging DB. It is swapped in as the live DB only if the judge doesn't fail it.
 
+### Amazon spike findings (amazon.in, Sep 2026)
+- **Product page, no login:**
+  - It shows the displayed average (1 decimal), the exact global ratings count, a star histogram of *rounded percentages*, and about 8 top reviews with full text, review ID, stars, date, variant, verified badge and helpful votes. Headless Chromium had no captcha at about 1 request every 4–9 seconds.
+  - **The histogram is Amazon's weighted distribution, not raw counts.** For example, a listing with 6 ratings showed 64/0/15/21/0%. The displayed average matches the histogram's weighted mean to within about 0.02. So the 4.1 calculator works on that weighted mean, and gives a range to account for the rounding.
+  - **Amazon displays one decimal,** so "shows 4.1" means a weighted mean of 4.05 or more. This is configurable with `target_mode`.
+  - **Variation families share one rating pool** (the same `parentAsin`). Several ASINs can show identical ratings, so the dashboard groups them.
+  - Amazon sometimes serves an alternate page layout with no ratings block. The poller retries, and the judge never stores a page that fails its checks.
+- **Review listing (`/product-reviews/`):** redirects to sign-in when logged out. With a saved login, the poller reads "most recent" until it reaches reviews it already has. `--backfill` walks every star filter. The page cap for each filter still needs checking once logged in.
+
 ### Phase status
 | Phase | Status |
 |---|---|
 | 1. Sheets and returns: parser, SQLite, judge, dashboard | ✅ done. The real workbook reconciles exactly with the sheet's own Dashboard across all months; 0 rows rejected; 100% of named models mapped |
-| 2. Amazon ratings and reviews (own parser) | ⏳ next: feasibility spike on 1 ASIN, then scraper and the 4.1 calculator |
+| 2. Amazon ratings and reviews (own parser) | ✅ product-page poller, append-only review store, scrape judge, 4.1 calculator, dashboard tab. The full review listing needs a one-time login (`cultph amazon-login`) |
 | 3. AI review classification with a judge | ⏳ |
 | 4. Alerts and scheduling | ⏳ |
 
