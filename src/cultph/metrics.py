@@ -64,3 +64,20 @@ def rows_for(df: pd.DataFrame, selection: dict) -> pd.DataFrame:
     for col, val in selection.items():
         mask &= df[col].fillna("(blank)").astype(str) == str(val)
     return df[mask]
+
+
+def return_rates(approved: pd.DataFrame, sales: pd.DataFrame, by: list[str]) -> pd.DataFrame:
+    """Return % = approved returns+exchanges / units sold, and selling % = the
+    group's share of all units sold, per `by` (subset of product, month, platform).
+    Sales rows with platform 'All' only join when platform is not in `by`."""
+    if sales is None or sales.empty:
+        return pd.DataFrame(columns=by + ["returns", "units", "return_pct", "selling_pct"])
+    s = sales.dropna(subset=["product"])
+    if "platform" in by:
+        s = s[s["platform"] != "All"]
+    units = s.groupby(by)["units"].sum().rename("units")
+    rets = approved.dropna(subset=["product"]).groupby(by).size().rename("returns")
+    out = pd.concat([rets, units], axis=1).fillna(0).reset_index()
+    out["return_pct"] = out["returns"] / out["units"].where(out["units"] > 0)
+    out["selling_pct"] = out["units"] / out["units"].sum() if out["units"].sum() else 0.0
+    return out.sort_values(by).reset_index(drop=True)

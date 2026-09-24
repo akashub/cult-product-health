@@ -7,7 +7,7 @@ import pytest
 from cultph.config import ROOT, load_config
 from cultph.ingest import ingest
 from cultph.judge import run_checks, verdict
-from cultph.metrics import breakdown, dashboard_recompute, rows_for
+from cultph.metrics import breakdown, dashboard_recompute, return_rates, rows_for
 from cultph.sources import XlsxSource
 
 from make_fixture import build
@@ -25,7 +25,7 @@ def run(tmp_path: Path):
 
 def test_rows_conserved_and_blank_rows_ignored(run):
     _, _, res = run
-    assert res.source_rows == {"tickets": 3, "approved": 4, "pending": 2, "wms": 2}
+    assert res.source_rows == {"tickets": 3, "approved": 4, "pending": 2, "wms": 2, "sales": 5}
     assert not res.rejects and not res.header_errors
 
 
@@ -116,3 +116,20 @@ def test_alias_collision_rejected(tmp_path):
     cfg.products[1].aliases.append("gun-a")  # same key as product A's alias "Gun A"
     with pytest.raises(ValueError):
         cfg.alias_index()
+
+
+def test_return_and_selling_pct(run):
+    cfg, src, res = run
+    rr = return_rates(res.tables["approved"], res.tables["sales"], ["product"])
+    got = {r.product: (r.returns, r.units, round(r.return_pct, 4), round(r.selling_pct, 4)) for r in rr.itertuples()}
+    # A: 2 returns / 120 units; B: 2 returns / 100 units; 220 units total
+    assert got == {"Sample Gun A": (2, 120, 0.0167, 0.5455), "Sample Foot B": (2, 100, 0.02, 0.4545)}
+    checks = {c["check"]: c for c in run_checks(res, cfg, src)}
+    assert checks["sales_overlap"]["status"] == "pass" and checks["return_pct_le_100"]["status"] == "pass"
+
+
+def test_judge_fails_when_returns_exceed_sales(run):
+    cfg, src, res = run
+    res.tables["sales"].loc[:, "units"] = 0.5
+    checks = {c["check"]: c for c in run_checks(res, cfg, src)}
+    assert checks["return_pct_le_100"]["status"] == "fail"

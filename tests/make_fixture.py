@@ -49,6 +49,11 @@ def build(path: Path) -> dict:
     w.append([datetime(2026, 3, 27), MONTHS[3], "MARKET-X", "3P", "RTO", "Courier Return", None,
               200002.0, "`30000000000002", "SKU-B2", "Foot B", "F2", "RETURNED"])
 
+    s = wb.create_sheet("Sales")
+    s.append(["Month", "SKU", "Model", "Platform", "Units", "Revenue"])
+    for m, sku, units in [(1, "SKU-A1", 100), (1, "SKU-B1", 50), (2, "SKU-B2", 40), (3, "SKU-A1", 20), (3, "SKU-B1", 10)]:
+        s.append([datetime(2026, m, 1), sku, None, "Amazon", units, units * 1999.0])
+
     # Hand-made pivot the judge must reproduce: approved per month, total = approved + pending
     d = wb.create_sheet("Dashboard")
     d["B1"], d["C1"] = "Approved", "Total"

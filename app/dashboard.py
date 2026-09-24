@@ -18,6 +18,18 @@ from cultph.metrics import breakdown, rows_for
 
 st.set_page_config(page_title="Cult Product Health", layout="wide")
 
+_pw = __import__("cultph.config", fromlist=["env"]).env("DASHBOARD_PASSWORD")
+if _pw and not st.session_state.get("authed"):
+    import hmac
+
+    entered = st.text_input("Password", type="password")
+    if entered and hmac.compare_digest(entered, _pw):
+        st.session_state["authed"] = True
+        st.rerun()
+    elif entered:
+        st.error("Wrong password")
+    st.stop()
+
 if not LIVE_DB.exists():
     st.error("No published data yet. Run `uv run cultph sync` first.")
     st.stop()
@@ -65,8 +77,25 @@ def filters(df: pd.DataFrame, key: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=60)
+def load_optional(name: str) -> pd.DataFrame:
+    try:
+        return load(name)
+    except Exception:  # noqa: BLE001 - table not configured
+        return pd.DataFrame()
+
+
 approved, pending, wms, tickets = load("approved"), load("pending"), load("wms"), load("tickets")
+sales = load_optional("sales")
 checks = load("checks")
+CATEGORY = load_config().category_of()
+
+with st.sidebar:
+    cat = st.radio("Category", ["All", "massager", "scale"], horizontal=True)
+if cat != "All":
+    approved, pending, wms, tickets = (d[d["category"] == cat] for d in (approved, pending, wms, tickets))
+    if not sales.empty:
+        sales = sales[sales["category"] == cat]
 
 # ---------- sidebar: pipeline health (from the latest run, even if it was blocked) ----------
 with st.sidebar:
@@ -134,7 +163,8 @@ with tab_amz:
             hist = {5: r.p5, 4: r.p4, 3: r.p3, 2: r.p2, 1: r.p1}
             pl = rating_plan(int(r.total_ratings), hist, target, shown=r.avg_rating)
             rows.append({
-                "asin": r.asin, "product": r.product, "displayed": r.avg_rating, "ratings": r.total_ratings,
+                "asin": r.asin, "product": r.product, "category": CATEGORY.get(r.product, "?"),
+                "displayed": r.avg_rating, "ratings": r.total_ratings,
                 "weighted mean": f"{pl['avg_range'][0]:.3f}–{pl['avg_range'][1]:.3f}" + ("" if pl["consistent"] else " ⚠"),
                 f"5★ needed to show {shown_target}": "0" if pl["five_star_needed"] == (0, 0) else f"{pl['five_star_needed'][0]}–{pl['five_star_needed'][1]}",
                 "1★ it can absorb": f"{pl['one_star_absorbable'][0]}–{pl['one_star_absorbable'][1]}",
@@ -144,6 +174,8 @@ with tab_amz:
                 "as of": r.captured_at,
             })
         table = pd.DataFrame(rows).sort_values("displayed")
+        if cat != "All":
+            table = table[table["category"] == cat]
         st.markdown(f"**Latest per ASIN · target: show {shown_target}★** "
                     f"({'weighted mean ≥ ' + str(target) if mode == 'displayed' else 'exact mean ≥ ' + str(target)})")
         st.caption("ASINs in the same variation family share one rating pool on Amazon (same parent ASIN).")
@@ -202,6 +234,13 @@ with tab_over:
         "wms_returns": wms.groupby("product").size(),
         "product_tickets": tickets[tickets["is_product_issue"] == 1].groupby("product").size(),
     }).fillna(0).astype(int)
+    if not sales.empty:
+        from cultph.metrics import return_rates
+
+        rr = return_rates(approved, sales, ["product"]).set_index("product")
+        summary["units_sold"] = rr["units"].reindex(summary.index).fillna(0).astype(int)
+        summary["return_pct"] = rr["return_pct"].reindex(summary.index)
+        summary["selling_pct"] = rr["selling_pct"].reindex(summary.index)
     summary["sku_name_conflicts"] = approved[approved["name_conflict"] == 1].groupby("product").size()
     summary["sku_name_conflicts"] = summary["sku_name_conflicts"].fillna(0).astype(int)
     summary["top_issue"] = top_issue["issue"]
@@ -210,7 +249,11 @@ with tab_over:
     st.caption("sku_name_conflicts = approved rows whose model name disagrees with the SKU code "
                "(counted under the SKU's product). See Data quality.")
     st.dataframe(summary.sort_values("approved", ascending=False), width="stretch",
-                 column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
+                 column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+                                "return_pct": st.column_config.NumberColumn(format="percent"),
+                                "selling_pct": st.column_config.NumberColumn(format="percent")})
+    if sales.empty:
+        st.info("Return % and selling % appear here once a units-sold sheet is added (tabs.sales in the config).")
     st.subheader("Monthly trend (approved returns + exchanges)")
     st.bar_chart(approved.groupby(["month", "mode"]).size().unstack(fill_value=0))
 
@@ -302,6 +345,18 @@ with tab_iss:
                     st.rerun()
 
 with tab_ret:
+    if not sales.empty:
+        from cultph.metrics import return_rates
+
+        st.markdown("**Return rate = approved returns + exchanges ÷ units sold** (months with sales data only)")
+        months_both = sorted(set(sales["month"]) & set(approved["month"]))
+        a_s, s_s = approved[approved["month"].isin(months_both)], sales[sales["month"].isin(months_both)]
+        dim = st.radio("Split by", ["product", "product + month", "product + platform"], horizontal=True, key="rr_dim")
+        by = {"product": ["product"], "product + month": ["product", "month"], "product + platform": ["product", "platform"]}[dim]
+        st.dataframe(return_rates(a_s, s_s, by), hide_index=True, width="stretch",
+                     column_config={"return_pct": st.column_config.NumberColumn(format="percent"),
+                                    "selling_pct": st.column_config.NumberColumn(format="percent")})
+        st.divider()
     df = filters(approved, "ret")
     cols = ["event_date", "product", "sku", "model_raw", "issue", "mode", "platform", "channel", "batch", "amount",
             "warehouse", "order_id", "src_tab", "src_row"]

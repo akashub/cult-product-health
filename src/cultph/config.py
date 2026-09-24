@@ -69,6 +69,9 @@ class Config:
     def sku_index(self) -> dict[str, str]:
         return _unique_index((s, p.name) for p in self.products for s in p.skus)
 
+    def category_of(self) -> dict[str, str]:
+        return {p.name: p.category for p in self.products}
+
     def alias_index(self) -> dict[str, str]:
         return _unique_index((a, p.name) for p in self.products for a in [p.name, *p.aliases])
 

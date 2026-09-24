@@ -146,3 +146,10 @@ def test_failing_channel_does_not_block_others(tmp_path, monkeypatch):
     monkeypatch.setitem(CHANNELS, "telegram", lambda a: True)
     deliver(con, [A], ["slack", "telegram"])
     assert con.execute("SELECT channels FROM alert_event").fetchone()[0] == "slack:error:OSError,telegram"
+
+
+def test_resolve_channels(monkeypatch):
+    monkeypatch.setattr(alerts_mod, "env", _env({"SLACK_WEBHOOK_URL": "u"}))
+    monkeypatch.setattr(alerts_mod, "desktop_supported", lambda: False)
+    assert alerts_mod.resolve_channels("auto") == ["slack"]
+    assert alerts_mod.resolve_channels(["email"]) == ["email"]

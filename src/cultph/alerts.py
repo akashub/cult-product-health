@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import platform
+import shutil
 import smtplib
 import sqlite3
 import subprocess
@@ -154,12 +155,20 @@ def evaluate(con, amazon_cfg: dict, alert_cfg: dict, sheet_tables: dict[str, pd.
 
 # ---------------- delivery ----------------
 
-def _macos(a: Alert) -> bool:
-    if platform.system() != "Darwin":
-        return False
-    esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')  # noqa: E731
-    script = f'display notification "{esc(a.detail[:200])}" with title "Cult · {esc(a.title[:80])}"'
-    return subprocess.run(["osascript", "-e", script], capture_output=True).returncode == 0
+def _desktop(a: Alert) -> bool:
+    """Native notification on macOS (osascript) or Linux (notify-send)."""
+    system = platform.system()
+    if system == "Darwin":
+        esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')  # noqa: E731
+        script = f'display notification "{esc(a.detail[:200])}" with title "Cult · {esc(a.title[:80])}"'
+        return subprocess.run(["osascript", "-e", script], capture_output=True).returncode == 0
+    if system == "Linux" and shutil.which("notify-send"):
+        return subprocess.run(["notify-send", f"Cult · {a.title[:80]}", a.detail[:200]], capture_output=True).returncode == 0
+    return False
+
+
+def desktop_supported() -> bool:
+    return platform.system() == "Darwin" or (platform.system() == "Linux" and bool(shutil.which("notify-send")))
 
 
 def _telegram(a: Alert) -> bool:
@@ -194,7 +203,26 @@ def _email(a: Alert) -> bool:
     return True
 
 
-CHANNELS = {"macos": _macos, "telegram": _telegram, "slack": _slack, "email": _email}
+CHANNELS = {"desktop": _desktop, "macos": _desktop, "telegram": _telegram, "slack": _slack, "email": _email}
+
+
+def configured_channels() -> list[str]:
+    """Channels that can actually send right now, given data/.env."""
+    out = ["desktop"] if desktop_supported() else []
+    if env("TELEGRAM_BOT_TOKEN") and env("TELEGRAM_CHAT_ID"):
+        out.append("telegram")
+    if env("SLACK_WEBHOOK_URL"):
+        out.append("slack")
+    if all(env(k) for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "ALERT_EMAIL_TO")):
+        out.append("email")
+    return out
+
+
+def resolve_channels(setting) -> list[str]:
+    """'auto' (default) = every configured channel; or an explicit list."""
+    if setting in (None, "auto", ["auto"]):
+        return configured_channels()
+    return list(setting)
 
 
 def deliver(con, alerts: list[Alert], channels: list[str]) -> None:

@@ -8,7 +8,7 @@ import pandas as pd
 
 from .config import Config
 from .ingest import IngestResult
-from .metrics import breakdown, dashboard_recompute, find_block
+from .metrics import breakdown, dashboard_recompute, find_block, return_rates
 
 PASS, WARN, FAIL = "pass", "warn", "fail"
 
@@ -80,6 +80,22 @@ def run_checks(res: IngestResult, cfg: Config, source=None) -> list[dict]:
         sums = b.groupby("product")["share"].sum()
         off = sums[(sums - 1).abs() > 1e-9]
         out.append(_check("segment_sums", FAIL if len(off) else PASS, f"{len(off)} product groups whose issue shares don't sum to 100%"))
+
+    # 6b. Sales: periods overlap the returns, and no product returns more than it sold
+    sales = res.tables.get("sales")
+    if sales is not None and not sales.empty and appr is not None and not appr.empty:
+        overlap = sorted(set(sales["month"]) & set(appr["month"]))
+        out.append(_check("sales_overlap", PASS if overlap else FAIL,
+                          f"{len(overlap)} months with both sales and returns" if overlap else
+                          f"sales months {sorted(set(sales['month']))[:3]}.. don't overlap returns months"))
+        rr = return_rates(appr[appr["month"].isin(overlap)], sales[sales["month"].isin(overlap)], ["product", "month"])
+        over = rr[rr["return_pct"] > 1]
+        out.append(_check("return_pct_le_100", FAIL if len(over) else PASS,
+                          f"{len(over)} product-months with returns > units sold"
+                          + (f" (e.g. {over.iloc[0]['product']} {over.iloc[0]['month']})" if len(over) else "")))
+        no_sales = sorted(set(appr["product"].dropna()) - set(sales["product"].dropna()))
+        if no_sales:
+            out.append(_check("sales_coverage", WARN, f"{len(no_sales)} products have returns but no sales rows: {no_sales[:5]}"))
 
     # 7. Reconcile against the sheet's own Dashboard numbers (month rows + grand total)
     dc = cfg.dashboard_check

@@ -21,7 +21,7 @@ from .normalize import (
     split_ids,
 )
 
-ROLES = ("tickets", "approved", "pending", "wms")
+ROLES = ("tickets", "approved", "pending", "wms", "sales")
 
 
 @dataclass
@@ -170,6 +170,30 @@ def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver) -> t
             "status": clean_text(get(row, "status")),
         }
         rec.update(resolver.resolve(rec["sku"], rec["model_raw"]))
+    elif role == "sales":
+        # one row = units sold of a product (or SKU) in a period, optionally per platform
+        period = parse_dt(get(row, "date"), df)
+        if period is None:
+            n = month_label_number(get(row, "month_label"))
+            year = get(row, "year")
+            if n and not is_blank(year):
+                period = parse_dt(f"{int(float(year))}-{n:02d}-01", False)
+        if period is None:
+            return None, "unparseable sales period"
+        try:
+            units = float(get(row, "units"))
+        except (TypeError, ValueError):
+            return None, "units not a number"
+        platform_raw = get(row, "platform")
+        platform = normalize_platform(platform_raw, None, cfg.platform_map)[0] if not is_blank(platform_raw) else "All"
+        rev = get(row, "revenue")
+        try:
+            rev = float(rev) if not is_blank(rev) else None
+        except (TypeError, ValueError):
+            rev = None
+        rec = {"created_at": period, "sku": clean_id(get(row, "sku")), "model_raw": clean_text(get(row, "model")),
+               "platform": platform, "units": units, "revenue": rev}
+        rec.update(resolver.resolve(rec["sku"], rec["model_raw"]))
     else:
         raise ValueError(role)
 
@@ -202,5 +226,8 @@ def ingest(source, cfg: Config) -> IngestResult:
             rec["src_row"] = src_row
             records.append(rec)
         res.source_rows[role] = nonblank
-        res.tables[role] = pd.DataFrame.from_records(records)
+        df = pd.DataFrame.from_records(records)
+        if not df.empty:
+            df["category"] = df["product"].map(cfg.category_of())
+        res.tables[role] = df
     return res

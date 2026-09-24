@@ -8,7 +8,10 @@
   cultph label     classify new reviews one by one (classifier + judge)
   cultph alerts    evaluate alert rules and notify (first run sets a baseline)
   cultph run       sync → amazon → label (if API key) → alerts; for scheduling
-  cultph schedule  write a launchd plist (does not install it)
+  cultph schedule  write a launchd plist (does not install it; macOS)
+  cultph watch     run everything every N minutes in the foreground (any OS)
+  cultph setup     enter API keys / alert credentials (saved to data/.env)
+  cultph doctor    show what's ready and the next step for what isn't
 """
 
 from __future__ import annotations
@@ -119,7 +122,7 @@ def cmd_label(args) -> int:
 
 
 def cmd_alerts(args) -> int:
-    from .alerts import deliver, evaluate, load_sheet_tables
+    from .alerts import deliver, evaluate, load_sheet_tables, resolve_channels
     from .amazon import store as amazon_store
     from .db import LIVE_DB
 
@@ -129,7 +132,12 @@ def cmd_alerts(args) -> int:
         from .alerts import CHANNELS, Alert
 
         a = Alert("test", "test", "normal", "Test alert", "If you can read this, this channel works.")
-        for name in alert_cfg.get("channels", ["macos"]):
+        from .alerts import resolve_channels
+
+        chans = resolve_channels(alert_cfg.get("channels", "auto"))
+        if not chans:
+            print("  no channels configured (run `uv run cultph setup`); alerts still appear in the dashboard feed")
+        for name in chans:
             try:
                 print(f"  {name}: {'sent' if CHANNELS[name](a) else 'not configured'}")
             except Exception as e:  # noqa: BLE001
@@ -139,7 +147,7 @@ def cmd_alerts(args) -> int:
     first = con.execute("SELECT count(*) FROM sqlite_master WHERE name='alert_state'").fetchone()[0] == 0 or \
         con.execute("SELECT count(*) FROM alert_state WHERE key='baseline_at'").fetchone()[0] == 0
     alerts = evaluate(con, cfg.raw.get("amazon", {}), alert_cfg, load_sheet_tables(LIVE_DB))
-    deliver(con, alerts, alert_cfg.get("channels", ["macos"]))
+    deliver(con, alerts, resolve_channels(alert_cfg.get("channels", "auto")))
     con.commit()
     if first:
         print("alerts baseline recorded; nothing sent on the first run")
@@ -199,6 +207,36 @@ def cmd_schedule(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    from .setup import run_setup
+
+    run_setup()
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    from .setup import print_doctor
+
+    return print_doctor(live=args.live)
+
+
+def cmd_watch(args) -> int:
+    """Cross-platform scheduler: run everything every N minutes until Ctrl-C."""
+    import random
+    import time
+    from datetime import datetime
+
+    print(f"Running every {args.every} min (±10%). Ctrl-C to stop. Works only while this computer is awake.")
+    try:
+        while True:
+            print(f"\n######## {datetime.now():%Y-%m-%d %H:%M}")
+            cmd_run(args)
+            time.sleep(args.every * 60 * random.uniform(0.9, 1.1))
+    except KeyboardInterrupt:
+        print("stopped")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="cultph")
     p.add_argument("--config", help="path to config yaml (default: config.private.yaml, else example)")
@@ -222,6 +260,13 @@ def main(argv=None) -> int:
     al.set_defaults(fn=cmd_alerts)
     r = sub.add_parser("run")
     r.set_defaults(fn=cmd_run, asin=None, backfill=False, headed=False, limit=None)
+    sub.add_parser("setup").set_defaults(fn=cmd_setup)
+    dr = sub.add_parser("doctor")
+    dr.add_argument("--live", action="store_true", help="also test Amazon, AI and Google connections for real")
+    dr.set_defaults(fn=cmd_doctor)
+    w = sub.add_parser("watch")
+    w.add_argument("--every", type=int, default=60, help="minutes between runs")
+    w.set_defaults(fn=cmd_watch, asin=None, backfill=False, headed=False, limit=None)
     sc = sub.add_parser("schedule")
     sc.add_argument("--every", type=int, default=60, help="minutes between runs")
     sc.set_defaults(fn=cmd_schedule)

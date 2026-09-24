@@ -27,6 +27,11 @@ tabs:
               return_type: Return Type, return_sub_type: Return Sub Type, reason: Reason, order_id: Order ID,
               item_code: Item Code, sku: SKU, model: Model, facility: Facility, status: Status}
 
+  sales:                           # optional: units sold, for return % and selling %
+    name: Sales
+    columns: {date: Month, sku: SKU, model: Model, platform: Platform, units: Units, revenue: Revenue}
+    # instead of a date column you can give month_label (e.g. "1~January") plus year
+
 product_issue_l2: [Product]      # L2 values that mean "fault with the product"
 not_mentioned: [Not Mentioned]
 
@@ -50,6 +55,7 @@ thresholds:
 products:                        # SKU code is authoritative; aliases = spellings seen
   - {name: Sample Gun A, kind: gun, skus: [SKU-A1], aliases: [Gun A, Sample Gun A Blue]}
   - {name: Sample Foot B, kind: foot, skus: [SKU-B1, SKU-B2], aliases: [Foot B]}
+  - {name: Sample Scale C, category: scale, kind: smart}   # category defaults to massager
 
 amazon:
   domain: amazon.in
@@ -87,6 +93,6 @@ ai:
 
 alerts:
   recent_days: 14                  # a review must be posted within this many days to alert
-  channels: [macos]                # add telegram / slack / email once their keys are in data/.env
+  channels: auto                   # every channel with credentials (desktop, telegram, slack, email); or a list
   return_spike_x: 2.0              # weekly returns >= 2x the trailing 4-week average...
   return_spike_min: 5              # ...and at least this many
