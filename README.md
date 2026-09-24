@@ -23,7 +23,14 @@ uv run cultph amazon --backfill              # walk every star filter (needs log
 # AI issue labels (classifier + judge)
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > data/.env
 uv run cultph label                          # labels new/changed reviews one by one
+
+# Alerts and scheduling
+uv run cultph run                            # sync → amazon → label (if key) → alerts
+uv run cultph alerts --test                  # check notification channels
+uv run cultph schedule --every 60            # writes a launchd plist and prints how to enable it
 ```
+
+Alert channels: macOS notifications by default. To add Telegram, Slack or email, put `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, `SLACK_WEBHOOK_URL`, or `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS`/`ALERT_EMAIL_TO` in `data/.env`, and list the channel under `alerts.channels` in the config.
 
 To try it without real data, run `uv run python tests/make_fixture.py` and then `uv run cultph --config config.example.yaml sync`.
 

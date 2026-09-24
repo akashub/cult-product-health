@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ..config import DATA_DIR
+from ..config import env
 
 PROMPT_VERSION = "v1"
 
@@ -136,12 +135,7 @@ class Labeler:
 def make_client():
     import anthropic
 
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    env_file = DATA_DIR / ".env"
-    if not key and env_file.exists():
-        for line in env_file.read_text().splitlines():
-            if line.startswith("ANTHROPIC_API_KEY="):
-                key = line.split("=", 1)[1].strip().strip('"')
+    key = env("ANTHROPIC_API_KEY")
     if not key:
         raise RuntimeError("Set ANTHROPIC_API_KEY or put it in data/.env")
     return anthropic.Anthropic(api_key=key)

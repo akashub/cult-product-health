@@ -102,3 +102,15 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         for p in raw.get("products", [])
     ]
     return Config(raw=raw, path=path, products=products)
+
+
+def env(name: str) -> str | None:
+    """Reads a secret from the environment, falling back to data/.env (gitignored)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    f = DATA_DIR / ".env"
+    if f.exists():
+        for line in f.read_text().splitlines():
+            if line.strip().startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'") or None
+    return None

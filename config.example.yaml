@@ -83,3 +83,9 @@ ai:
     - {code: service_warranty, description: "refund, replacement, warranty or customer support problems"}
     - {code: delivery, description: "late delivery, wrong item, packaging"}
     - {code: value_price, description: "overpriced or not worth the money"}
+
+alerts:
+  recent_days: 14                  # a review must be posted within this many days to alert
+  channels: [macos]                # add telegram / slack / email once their keys are in data/.env
+  return_spike_x: 2.0              # weekly returns >= 2x the trailing 4-week average...
+  return_spike_min: 5              # ...and at least this many

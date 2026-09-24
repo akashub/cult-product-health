@@ -89,9 +89,27 @@ st.title("Cult Product Health")
 st.caption("Phase 1 · returns, exchanges and support tickets from the shared sheet. "
            "Return % needs units-sold data (not in the sheet yet).")
 
-tab_over, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
-    ["Overview", "Amazon ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
+tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
+    ["Overview", "Alerts", "Amazon ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
      "Pending verification", "Warehouse returns", "Data quality"])
+
+with tab_alerts:
+    has_alerts = AMAZON_DB.exists() and sqlite3.connect(AMAZON_DB).execute(
+        "SELECT count(*) FROM sqlite_master WHERE name='alert_event'").fetchone()[0]
+    if not has_alerts:
+        st.info("No alerts yet. `uv run cultph alerts` records a baseline on its first run, then raises new alerts.")
+    else:
+        with sqlite3.connect(AMAZON_DB) as con:
+            ev_df = pd.read_sql("SELECT * FROM alert_event ORDER BY created_at DESC", con)
+            base = con.execute("SELECT value FROM alert_state WHERE key='baseline_at'").fetchone()
+        st.caption(f"Baseline: {base[0].strip(chr(34)) if base else '—'}. Only reviews first seen after this and "
+                   "posted recently raise alerts.")
+        if ev_df.empty:
+            st.success("No alerts since the baseline.")
+        for r in ev_df.head(100).itertuples():
+            icon = {"urgent": "🚨", "high": "🔴", "normal": "🔵"}.get(r.priority, "•")
+            st.markdown(f"{icon} **{r.title}** · <span style='color:gray'>{r.created_at} · {r.rule}"
+                        f" · sent: {r.channels or 'feed only'}</span>  \n{r.detail}", unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=60)

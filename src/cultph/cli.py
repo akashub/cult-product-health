@@ -6,6 +6,9 @@
   cultph amazon-login      sign in once in a visible browser (secondary account)
   cultph amazon-discover Q list Cult-brand search results to build the ASIN list
   cultph label     classify new reviews one by one (classifier + judge)
+  cultph alerts    evaluate alert rules and notify (first run sets a baseline)
+  cultph run       sync → amazon → label (if API key) → alerts; for scheduling
+  cultph schedule  write a launchd plist (does not install it)
 """
 
 from __future__ import annotations
@@ -106,6 +109,87 @@ def cmd_label(args) -> int:
     return 1 if counts["error"] else 0
 
 
+def cmd_alerts(args) -> int:
+    from .alerts import deliver, evaluate, load_sheet_tables
+    from .amazon import store as amazon_store
+    from .db import LIVE_DB
+
+    cfg = load_config(args.config)
+    alert_cfg = cfg.raw.get("alerts", {})
+    if getattr(args, "test", False):
+        from .alerts import CHANNELS, Alert
+
+        a = Alert("test", "test", "normal", "Test alert", "If you can read this, this channel works.")
+        for name in alert_cfg.get("channels", ["macos"]):
+            try:
+                print(f"  {name}: {'sent' if CHANNELS[name](a) else 'not configured'}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  {name}: error {e}")
+        return 0
+    con = amazon_store.connect()
+    first = con.execute("SELECT count(*) FROM sqlite_master WHERE name='alert_state'").fetchone()[0] == 0 or \
+        con.execute("SELECT count(*) FROM alert_state WHERE key='baseline_at'").fetchone()[0] == 0
+    alerts = evaluate(con, cfg.raw.get("amazon", {}), alert_cfg, load_sheet_tables(LIVE_DB))
+    deliver(con, alerts, alert_cfg.get("channels", ["macos"]))
+    con.commit()
+    if first:
+        print("alerts baseline recorded; nothing sent on the first run")
+    print(f"{len(alerts)} new alerts")
+    for a in alerts:
+        print(f"  [{a.priority}] {a.title} — {a.detail[:120]}")
+    return 0
+
+
+def cmd_run(args) -> int:
+    from .config import env
+
+    steps = [("sync", cmd_sync), ("amazon", cmd_amazon)]
+    if env("ANTHROPIC_API_KEY"):
+        steps.append(("label", cmd_label))
+    else:
+        print("(skipping label: no ANTHROPIC_API_KEY)")
+    steps.append(("alerts", cmd_alerts))
+    failed = []
+    for name, fn in steps:
+        print(f"\n== {name}")
+        try:
+            if fn(args):
+                failed.append(name)
+        except Exception as e:  # noqa: BLE001 - later steps (alerts) should still run
+            print(f"  ✘ {name} crashed: {e}")
+            failed.append(name)
+    print(f"\nrun finished; failed steps: {', '.join(failed) or 'none'}")
+    return 1 if failed else 0
+
+
+def cmd_schedule(args) -> int:
+    import shutil
+
+    from .config import DATA_DIR, ROOT
+
+    uv = shutil.which("uv") or "uv"
+    label = "com.cultph.run"
+    plist = DATA_DIR / f"{label}.plist"
+    plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key><array>
+    <string>{uv}</string><string>run</string><string>--project</string><string>{ROOT}</string>
+    <string>cultph</string><string>run</string></array>
+  <key>WorkingDirectory</key><string>{ROOT}</string>
+  <key>StartInterval</key><integer>{args.every * 60}</integer>
+  <key>StandardOutPath</key><string>{DATA_DIR / "run.log"}</string>
+  <key>StandardErrorPath</key><string>{DATA_DIR / "run.log"}</string>
+</dict></plist>
+""")
+    print(f"wrote {plist} (every {args.every} min). Not installed. To turn it on:")
+    print(f"  cp '{plist}' ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{label}.plist")
+    print(f"To turn it off:\n  launchctl bootout gui/$(id -u)/{label}")
+    print("It runs only while the Mac is awake.")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="cultph")
     p.add_argument("--config", help="path to config yaml (default: config.private.yaml, else example)")
@@ -124,6 +208,14 @@ def main(argv=None) -> int:
     lb = sub.add_parser("label")
     lb.add_argument("--limit", type=int)
     lb.set_defaults(fn=cmd_label)
+    al = sub.add_parser("alerts")
+    al.add_argument("--test", action="store_true", help="send a test message on each configured channel")
+    al.set_defaults(fn=cmd_alerts)
+    r = sub.add_parser("run")
+    r.set_defaults(fn=cmd_run, asin=None, backfill=False, headed=False, limit=None)
+    sc = sub.add_parser("schedule")
+    sc.add_argument("--every", type=int, default=60, help="minutes between runs")
+    sc.set_defaults(fn=cmd_schedule)
     args = p.parse_args(argv)
     return args.fn(args)
 
