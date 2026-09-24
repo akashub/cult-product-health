@@ -79,3 +79,19 @@ def test_store_relabels_changed_reviews_and_resets_human(tmp_path):
     assert [r["review_id"] for r in todo] == ["R1"]
     label_store.save_label(con, labeler([GOOD, Verdict(verdict="agree", reason="ok")]).label(todo[0]))
     assert con.execute("SELECT human_verdict FROM review_label").fetchone()[0] is None
+
+
+def test_audit_sample_draws_only_auto_labels(tmp_path):
+    con = amazon_store.connect(tmp_path / "a.db")
+    base = {"review_date": None, "country": None, "verified": True, "variant": None, "helpful_votes": 0}
+    reviews = [{**REVIEW, **base, "review_id": f"R{i}"} for i in range(40)]
+    amazon_store.upsert_reviews(con, "A1", "Gun A", reviews, "x")
+    con.execute("UPDATE review SET product = 'Gun A'")
+    for i, r in enumerate(reviews):
+        verdict = "agree" if i < 30 else "disagree"          # 30 auto, 10 queue
+        label_store.save_label(con, labeler([GOOD, Verdict(verdict=verdict, reason="")]).label(r))
+    n = label_store.sample_audits(con, PROMPT_VERSION, rate=0.10, min_per_group=3, seed=1)
+    assert n == 3                                             # max(3, ceil(0.1*30))
+    rows = con.execute("SELECT status FROM review_label WHERE audit = 1").fetchall()
+    assert rows and all(st == "auto" for (st,) in rows)
+    assert label_store.sample_audits(con, PROMPT_VERSION, rate=0.10, min_per_group=3, seed=2) == 0  # tops up only

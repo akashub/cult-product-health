@@ -99,7 +99,10 @@ def cmd_label(args) -> int:
         con.commit()
         counts[lab["status"]] += 1
         print(f"  [{i}/{len(todo)}] {r['review_id']} {lab['status']:<5} {lab['codes'] or '-'}")
-    print(f"auto {counts['auto']}  queued for review {counts['queue']}  errors {counts['error']}")
+    audits = label_store.sample_audits(con, PROMPT_VERSION, ai.get("audit_rate", 0.10), ai.get("audit_min_per_product", 3))
+    con.commit()
+    print(f"auto {counts['auto']}  queued for review {counts['queue']}  errors {counts['error']}  "
+          f"new audit samples {audits}")
     return 1 if counts["error"] else 0
 
 

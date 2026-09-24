@@ -65,6 +65,8 @@ amazon:
 ai:
   classifier_model: claude-haiku-4-5-20251001
   judge_model: claude-sonnet-5
+  audit_rate: 0.10                 # share of auto-accepted labels sent to a person, per product
+  audit_min_per_product: 3
   taxonomy:                        # code: what counts. Align with the issue names in your return sheet.
     - {code: dead_on_arrival, description: "does not turn on at all, dead from the start or soon after"}
     - {code: stopped_working, description: "worked at first, then stopped"}

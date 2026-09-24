@@ -208,6 +208,7 @@ with tab_iss:
         st.info("No labelled reviews yet. Run `uv run cultph label` (needs ANTHROPIC_API_KEY).")
     else:
         with sqlite3.connect(AMAZON_DB) as con:
+            label_store.ensure(con)  # applies column migrations
             lab = pd.read_sql(
                 "SELECT l.*, r.asin, r.product, r.attribution, r.rating, r.title, r.body, r.review_date "
                 "FROM review_label l JOIN review r USING (review_id) WHERE l.prompt_version = ?",
@@ -216,14 +217,18 @@ with tab_iss:
         lab["final"] = lab["status"].eq("auto") | lab["human_verdict"].isin(["correct", "fixed"])
         lab["final_codes"] = lab["codes"].where(lab["human_verdict"] != "fixed", lab["human_codes"]).fillna("")
         human = lab[lab["human_verdict"].notna()]
+        audited = human[human["status"] == "auto"]      # random sample of auto-accepted labels
+        disputed = human[human["status"] == "queue"]
+        waiting = ((lab["status"] == "queue") | (lab["audit"] == 1)) & lab["human_verdict"].isna()
         k = st.columns(5)
         k[0].metric("Labelled reviews", len(lab))
         k[1].metric("Auto-accepted", f"{(lab['status'] == 'auto').mean():.0%}")
-        k[2].metric("Waiting in queue", int(((lab["status"] == "queue") & lab["human_verdict"].isna()).sum()))
-        k[3].metric("Checked by a person", len(human))
-        k[4].metric("AI agreement (gold set)",
-                    f"{(human['human_verdict'] == 'correct').mean():.0%}" if len(human) else "n/a",
-                    help="Share of person-checked labels where the AI label was right")
+        k[2].metric("Waiting for a person", int(waiting.sum()))
+        k[3].metric("Auto-label accuracy (audit)",
+                    f"{(audited['human_verdict'] == 'correct').mean():.0%} of {len(audited)}" if len(audited) else "n/a",
+                    help="A person checked a random sample of auto-accepted labels. This is how far to trust the issue shares.")
+        k[4].metric("Disputed labels AI got right",
+                    f"{(disputed['human_verdict'] == 'correct').mean():.0%} of {len(disputed)}" if len(disputed) else "n/a")
         st.caption(f"Issue shares use final labels only ({int(lab['final'].sum())} reviews). A review can have several "
                    "issues, so shares don't add up to 100%. Reviews from shared rating pools are left out of per-product numbers.")
 
@@ -251,16 +256,18 @@ with tab_iss:
             st.dataframe(pd.DataFrame(ev_rows), hide_index=True, width="stretch")
 
         st.subheader("Review queue")
-        st.caption("Labels the judge didn't agree with, or whose evidence quote failed the check. Your decisions form the gold set.")
+        st.caption("Disputed labels (the judge didn't agree, or the evidence check failed) plus a random audit sample of "
+                   "auto-accepted ones. Your decisions form the gold set.")
         codes_all = [t["code"] for t in load_config().raw.get("ai", {}).get("taxonomy", [])]
-        queue = lab[(lab["status"] == "queue") & lab["human_verdict"].isna()].head(20)
+        queue = lab[waiting].sort_values("status", ascending=False).head(20)
         if queue.empty:
             st.success("Queue is empty.")
         for r in queue.itertuples():
             with st.container(border=True):
                 st.markdown(f"**{r.rating}★ · {r.title or ''}**  \n{r.body or ''}")
                 st.markdown("AI label: " + (", ".join(f"`{i['code']}` — “{i['evidence']}”" for i in json.loads(r.issues)) or "_no issues_"))
-                st.caption(f"judge: {r.judge_verdict} — {r.judge_reason}"
+                st.caption(("🎲 audit sample · " if r.status == "auto" else "⚠ disputed · ")
+                           + f"judge: {r.judge_verdict} — {r.judge_reason}"
                            + (f" · checks: {r.check_errors}" if r.check_errors else ""))
                 c1, c2, c3 = st.columns([1, 3, 1])
                 if c1.button("AI is correct", key=f"ok_{r.review_id}"):
@@ -268,7 +275,7 @@ with tab_iss:
                         label_store.set_human(con, r.review_id, PROMPT_VERSION, "correct")
                     st.cache_data.clear()
                     st.rerun()
-                fix = c2.multiselect("Correct codes", codes_all, default=[c for c in (r.codes or "").split(",") if c],
+                fix = c2.multiselect("Correct codes", codes_all, default=[c for c in (r.codes or "").split(",") if c in codes_all],
                                      key=f"codes_{r.review_id}")
                 if c3.button("Save fix", key=f"fix_{r.review_id}"):
                     with sqlite3.connect(AMAZON_DB) as con:
