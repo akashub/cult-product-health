@@ -189,3 +189,10 @@ def test_performance_signals_from_fixture_and_real_page(tmp_path):
     con = store.connect(tmp_path / "a.db")
     store.add_snapshot(con, "A1", "Gun A", parse_product(html))
     assert con.execute("SELECT bought_min, bsr_sub, price FROM rating_snapshot").fetchone() == (2000, 4, 1199.0)
+
+
+
+def test_boundary_rounding_is_consistent():
+    """Live case: shown 3.5 with histogram 52/13/4/3/28 (mean 3.550-3.610)."""
+    lo, hi, ok = mean_range({5: 52, 4: 13, 3: 4, 2: 3, 1: 28}, 3.5)
+    assert ok and lo == hi == pytest.approx(3.55)

@@ -63,6 +63,9 @@ def required_share_of_five(hist_pct: dict[int, float], target: float = 4.1) -> f
     return (target - avg_other) / (5 - avg_other)
 
 
+BAND_TOLERANCE = 0.005  # Amazon was seen showing 3.5 for a mean of exactly 3.55; allow boundary rounding either way
+
+
 def displayed_band(shown: float) -> tuple[float, float]:
     """A rating displayed as 4.0 (round half up to one decimal) lies in [3.95, 4.05)."""
     return shown - 0.05, shown + 0.05 - 1e-9
@@ -76,9 +79,14 @@ def mean_range(hist_pct: dict[int, float], shown: float | None) -> tuple[float, 
         return h_lo, h_hi, True
     d_lo, d_hi = displayed_band(shown)
     lo, hi = max(h_lo, d_lo), min(h_hi, d_hi)
-    if lo > hi:
-        return h_lo, h_hi, False
-    return lo, hi, True
+    if lo <= hi:
+        return lo, hi, True
+    # the ranges only touch at a rounding boundary (e.g. shown 3.5, histogram mean >= 3.550): consistent,
+    # and the mean sits at that boundary
+    if h_lo <= d_hi + BAND_TOLERANCE and h_hi >= d_lo - BAND_TOLERANCE:
+        edge = d_hi if h_lo > d_hi else d_lo
+        return edge, edge, True
+    return h_lo, h_hi, False
 
 
 def plan(n: int, hist_pct: dict[int, float], target: float = 4.1, shown: float | None = None) -> dict:
