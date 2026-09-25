@@ -18,7 +18,14 @@ from cultph.config import load_config
 from cultph.db import LIVE_DB, last_runs, read_table
 from cultph.metrics import breakdown, rows_for
 
-st.set_page_config(page_title="Cult Product Health", layout="wide")
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from style import CSS, SEVERITY, card as card_html, glance, header, quote, section, status_badge, tiles  # noqa: E402
+
+st.set_page_config(page_title="Cult Product Health", page_icon="📊", layout="wide")
+st.markdown(CSS, unsafe_allow_html=True)
 
 _pw = __import__("cultph.config", fromlist=["env"]).env("DASHBOARD_PASSWORD")
 if _pw and not st.session_state.get("authed"):
@@ -101,24 +108,27 @@ if cat != "All":
 
 # ---------- sidebar: pipeline health (from the latest run, even if it was blocked) ----------
 with st.sidebar:
-    st.header("Pipeline health")
+    st.markdown("**Returns data sync**")
     runs = last_runs(1)
     run_checks = pd.DataFrame(runs[0]["checks"]) if runs else checks
     if runs:
         r = runs[0]
-        st.metric("Last sync", r["status"].upper(), help=r["at"])
-        if r["published"]:
-            st.caption(f"{r['at']} · published")
-        else:
-            st.error(f"{r['at']} · BLOCKED — dashboard shows the previous good snapshot")
-    st.dataframe(run_checks[["check", "status"]], hide_index=True, width="stretch")
+        st.markdown(status_badge(r["status"], r["at"][:16].replace("T", " "), r["published"]), unsafe_allow_html=True)
+    n_fail = int((run_checks["status"] == "fail").sum())
+    n_warn = int((run_checks["status"] == "warn").sum())
+    st.caption(f"{len(run_checks)} data checks · {n_fail} failed · {n_warn} warnings")
     with st.expander("Check details"):
         for c in run_checks.itertuples():
-            st.markdown(f"**{c.check}** — {c.status}  \n{c.detail}")
+            mark = {"pass": "✅", "warn": "⚠️", "fail": "❌"}.get(c.status, "•")
+            st.markdown(f"{mark} **{c.check}**  \n<span style='color:#6B7280;font-size:.8rem'>{c.detail}</span>",
+                        unsafe_allow_html=True)
 
-st.title("Cult Product Health")
-st.caption("Returns, exchanges and tickets from the shared sheet · Amazon and Flipkart ratings and reviews · "
-           "AI issue labels with a judge. Every number links back to its source rows.")
+st.markdown(header("Cult Product Health",
+                   "Returns, ratings and reviews for Cult massagers and scales · Amazon · Flipkart · shared sheet",
+                   "Updated " + (lambda v: v[:16].replace("T", " ") if v else "—")(
+                       sqlite3.connect(AMAZON_DB).execute("SELECT MAX(captured_at) FROM rating_snapshot").fetchone()[0]
+                       if AMAZON_DB.exists() else None)),
+            unsafe_allow_html=True)
 
 tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
     ["Overview", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
@@ -259,95 +269,177 @@ with tab_over:
                      (set(card["product"]) if not card.empty else set())}
 
     # ---------------- insights
-    ICON = {"act": "🔴", "watch": "🟠", "info": "🔵", "good": "🟢"}
-    n = {s: sum(1 for i in insights if i.severity == s) for s in ICON}
-    st.subheader("Insights")
-    c = st.columns(4)
-    c[0].metric("🔴 Act now", n["act"])
-    c[1].metric("🟠 Watch", n["watch"])
-    c[2].metric("🟢 Doing well", n["good"])
-    c[3].metric("🔵 Notes", n["info"])
-    st.caption(f"Computed {today:%d %b %Y} from stored reviews, ratings and returns. Each item says where its data lives; "
-               "open “Show the data” to check it.")
-    for i, ins in enumerate(insights):
-        with st.container(border=True):
-            st.markdown(f"{ICON.get(ins.severity, '•')} **{ins.title}**  \n{ins.detail}")
-            st.caption(f"→ {ins.where}")
-            if ins.evidence is not None and len(ins.evidence):
-                with st.expander(f"Show the data ({len(ins.evidence)} rows)"):
-                    st.dataframe(ins.evidence, hide_index=True, width="stretch")
+    import altair as alt
+
+    n = {s: sum(1 for i in insights if i.severity == s) for s in SEVERITY}
+    st.markdown(section("What needs attention", f"computed {today:%d %b %Y} · every card links to its data"),
+                unsafe_allow_html=True)
+    st.markdown(tiles(n, {"act": "problems to fix", "watch": "early warning signs", "good": "performing well",
+                          "info": "data & pipeline notes"}), unsafe_allow_html=True)
+
+    # portfolio at a glance
+    if not card.empty:
+        amz = card[card["platform"] == "amazon"]
+        w_avg = (amz["rating"] * amz["ratings"]).sum() / max(amz["ratings"].sum(), 1) if len(amz) else 0
+        at_target = int(card["status"].str.startswith("✅").sum())
+        rev14 = int(card["reviews 14d"].sum())
+        safety30 = int(card["safety 30d"].sum())
+        glance_items = [("Amazon avg rating", f"{w_avg:.2f}★", "weighted by ratings"),
+                        ("At or above 4.1★", f"{at_target}/{len(card)}", "product listings"),
+                        ("New reviews", f"{rev14}", "last 14 days"),
+                        ("Safety mentions", f"{safety30}", "last 30 days")]
+        if not approved.empty:
+            last_m = sorted(approved["month"].dropna().unique())[-1]
+            glance_items.append(("Returns + exchanges", f"{int((approved['month'] == last_m).sum()):,}", f"in {last_m} (sheet)"))
+        st.markdown('<div style="height:10px"></div>' + glance(glance_items), unsafe_allow_html=True)
+
+    main = [i for i in insights if i.severity != "info"]
+    notes = [i for i in insights if i.severity == "info"]
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+    cols = st.columns(2, gap="medium")
+    for idx, ins in enumerate(main):
+        with cols[idx % 2]:
+            with st.container(key=f"card_{ins.severity}_{idx}"):
+                st.markdown(card_html(ins), unsafe_allow_html=True)
+                if ins.evidence is not None and len(ins.evidence):
+                    with st.expander(f"Show the data · {len(ins.evidence)} rows"):
+                        st.dataframe(ins.evidence, hide_index=True, width="stretch")
+    if notes:
+        with st.expander(f"Data & pipeline notes · {len(notes)}"):
+            for idx, ins in enumerate(notes):
+                with st.container(key=f"card_info_{idx}"):
+                    st.markdown(card_html(ins), unsafe_allow_html=True)
 
     # ---------------- scorecard
-    st.subheader("Product scorecard")
+    st.markdown(section("Product scorecard", "one row per product · ratings, sales signals and recent reviews"),
+                unsafe_allow_html=True)
     if card.empty:
         st.info("No marketplace data yet. Run `uv run cultph amazon` / `cultph flipkart`.")
     else:
-        sc_plat = st.radio("Platform", ["amazon", "flipkart"], horizontal=True, format_func=str.title, key="sc_plat")
-        view = card[card["platform"] == sc_plat].drop(columns=["platform"])
+        sc_plat = st.segmented_control("Platform", ["amazon", "flipkart"], default="amazon", format_func=str.title,
+                                       key="sc_plat", label_visibility="collapsed") or "amazon"
+        view = card[card["platform"] == sc_plat].drop(columns=["platform", "listings"])
         if cat != "All":
             view = view[view["product"].map(unit_category) == cat]
         if sc_plat == "flipkart":
             view = view.drop(columns=["bought/month", "sub-rank", "rank category", "in stock"], errors="ignore")
-        st.caption("Rating = what the marketplace shows. “14d” = reviews posted in the last 14 days (unbiased sample: "
-                   "the marketplace's most-recent list) vs the 14 days before. Bought/month and rank come from Amazon's "
-                   "product page. Top complaint uses AI labels on ≤3★ reviews.")
-        st.dataframe(view, hide_index=True, width="stretch", column_config={
-            "% 1–2★ 14d": st.column_config.NumberColumn(format="percent"),
-            "price": st.column_config.NumberColumn(format="₹%d"),
-            "sub-rank": st.column_config.NumberColumn(format="#%d")})
+        for col in ("sub-rank", "price", "★ new (14d)", "★ prev 14d", "★ 14d", "% 1–2★ 14d"):
+            if col in view:
+                view[col] = pd.to_numeric(view[col], errors="coerce")
+        empty_cols = [c for c in view.columns if view[c].replace("", pd.NA).isna().all()]
+        view = view.drop(columns=empty_cols)  # e.g. sales/rank columns before the first poll that captures them
+        view = view.rename(columns={"status": "vs 4.1★ target", "reviews 14d": "new reviews (14d)",
+                                    "★ 14d": "★ new (14d)", "★ prev 14d": "★ prev 14d", "% 1–2★ 14d": "1–2★ share (14d)",
+                                    "top complaint 30d": "top complaint (30d)", "safety 30d": "safety (30d)"})
+        with st.container(key="panel_scorecard"):
+            st.dataframe(view, hide_index=True, width="stretch", height=min(38 * (len(view) + 1) + 4, 520),
+                         column_config={
+                             "product": st.column_config.TextColumn("product", width="medium"),
+                             "rating": st.column_config.NumberColumn("rating", format="%.1f ★"),
+                             "ratings": st.column_config.NumberColumn("ratings", format="%d"),
+                             "1–2★ share (14d)": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+                             "★ new (14d)": st.column_config.NumberColumn(format="%.2f"),
+                             "★ prev 14d": st.column_config.NumberColumn(format="%.2f"),
+                             "price": st.column_config.NumberColumn(format="₹%d"),
+                             "sub-rank": st.column_config.NumberColumn(format="#%d")})
+            st.caption("Rating = what the marketplace shows. “14d” = reviews posted in the last 14 days from the marketplace's "
+                       "most-recent list, vs the 14 days before. Bought/month, rank, price and stock come from Amazon's "
+                       "product page. Top complaint uses AI labels on ≤3★ reviews."
+                       + (f" Not captured yet (appear after the next poll): {', '.join(empty_cols)}." if empty_cols else ""))
 
     # ---------------- bi-weekly trends
-    st.subheader("Bi-weekly review trends")
+    st.markdown(section("Bi-weekly review trends", "new reviews per 14-day window · complete windows only"),
+                unsafe_allow_html=True)
     if trends.empty:
         st.info("No review history yet.")
     else:
-        tp = st.radio("Platform", ["amazon", "flipkart"], horizontal=True, format_func=str.title, key="tr_plat")
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            tp = st.segmented_control("Platform", ["amazon", "flipkart"], default="amazon", format_func=str.title,
+                                      key="tr_plat", label_visibility="collapsed") or "amazon"
         tr = trends[trends["platform"] == tp]
         units = (tr.groupby("unit")["n"].sum().sort_values(ascending=False).index.tolist())
         if cat != "All":
             units = [u for u in units if unit_category.get(u, "massager") == cat]
-        if units:
-            unit = st.selectbox("Product", units, key="tr_unit")
+        with c2:
+            unit = st.selectbox("Product", units, key="tr_unit", label_visibility="collapsed") if units else None
+        if unit:
             t = tr[tr["unit"] == unit].sort_values("window", ascending=False)
-            shown = t[t["complete"]].copy()
-            shown["window start"] = pd.to_datetime(shown["start"])  # date index keeps the axis chronological
-            chart = shown.set_index("window start")[["avg_stars"]].rename(columns={"avg_stars": "avg ★ of new reviews"})
-            a, b = st.columns(2)
-            with a:
-                st.markdown("**Average stars of new reviews, per 14 days**")
-                st.line_chart(chart)
-            with b:
-                st.markdown("**New reviews and share that are 1–2★**")
-                st.bar_chart(shown.set_index("window start")[["n"]].rename(columns={"n": "new reviews"}))
-            table = t[["label", "n", "avg_stars", "neg_share", "complete", "latest"]].rename(columns={
-                "label": "14-day window", "avg_stars": "avg ★", "neg_share": "1–2★ share",
-                "complete": "complete data", "latest": "latest (may still fill in)"})
-            st.dataframe(table, hide_index=True, width="stretch",
-                         column_config={"1–2★ share": st.column_config.NumberColumn(format="percent"),
-                                        "avg ★": st.column_config.NumberColumn(format="%.2f")})
+            shown = t[t["complete"] & (t["n"] > 0)].sort_values("start").copy()
+            shown["1–2★ share"] = shown["neg_share"]
+            order = shown["label"].tolist()
+            X = alt.X("label:O", sort=order, title=None, axis=alt.Axis(labelAngle=0, labelFontSize=11))
+
+            def tidy(chart):
+                return chart.configure_view(strokeWidth=0).configure(background="#FFFFFF").configure_axis(
+                    gridColor="#EEF0F4", domainColor="#D1D5DB", labelColor="#4B5563", titleColor="#6B7280")
+            a, b = st.columns(2, gap="medium")
+            with a, st.container(key="panel_trend_stars"):
+                st.markdown("**Average stars of new reviews**")
+                base = alt.Chart(shown).encode(x=X)
+                line = base.mark_line(color="#4F46E5", strokeWidth=3, point=alt.OverlayMarkDef(size=70, filled=True)).encode(
+                    y=alt.Y("avg_stars:Q", title="avg ★", scale=alt.Scale(domain=[1, 5])),
+                    tooltip=[alt.Tooltip("label:N", title="window"), alt.Tooltip("avg_stars:Q", title="avg ★", format=".2f"),
+                             alt.Tooltip("n:Q", title="reviews")])
+                rule = alt.Chart(pd.DataFrame({"y": [4.1]})).mark_rule(color="#059669", strokeDash=[5, 4]).encode(y="y:Q")
+                st.altair_chart(tidy((line + rule).properties(height=250)), use_container_width=True)
+                st.caption("Dashed line = 4.1★ target.")
+            with b, st.container(key="panel_trend_volume"):
+                st.markdown("**Volume and share of 1–2★ reviews**")
+                vol = alt.Chart(shown).mark_bar(color="#C7D2FE", cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=38).encode(
+                    x=X,
+                    y=alt.Y("n:Q", title="new reviews"),
+                    tooltip=[alt.Tooltip("label:N", title="window"), alt.Tooltip("n:Q", title="reviews"),
+                             alt.Tooltip("1–2★ share:Q", format=".0%")])
+                neg = alt.Chart(shown).mark_line(color="#DC2626", strokeWidth=2.5, point=alt.OverlayMarkDef(size=60, filled=True)).encode(
+                    x=X, y=alt.Y("1–2★ share:Q", title="1–2★ share", axis=alt.Axis(format="%"),
+                                                scale=alt.Scale(domain=[0, 1])))
+                st.altair_chart(tidy(alt.layer(vol, neg).resolve_scale(y="independent").properties(height=250)),
+                                use_container_width=True)
+                st.caption("Bars = new reviews · red line = share that are 1–2★.")
             if (~t["complete"]).any():
-                st.caption("Windows marked incomplete are older than the oldest review the scraper could reach for this "
-                           "listing (Amazon shows at most 100 recent reviews). They're left off the charts rather than "
-                           "shown as a decline.")
+                st.caption("Older windows are hidden where the scraper couldn't reach every review (Amazon lists at most 100 "
+                           "recent reviews per product), so they never show up as a false decline. The newest window may still fill in.")
+            with st.expander("Window-by-window numbers"):
+                table = t[["label", "n", "avg_stars", "neg_share", "complete", "latest"]].rename(columns={
+                    "label": "14-day window", "avg_stars": "avg ★", "neg_share": "1–2★ share",
+                    "complete": "complete data", "latest": "newest (may fill in)"})
+                st.dataframe(table, hide_index=True, width="stretch",
+                             column_config={"1–2★ share": st.column_config.NumberColumn(format="percent"),
+                                            "avg ★": st.column_config.NumberColumn(format="%.2f")})
+
             wins = windows(today, 4)
             mix = pd.concat([issue_mix(unb, labels_df, s, e).assign(window=f"{s:%d %b}–{e:%d %b}", window_start=pd.Timestamp(s))
                              for s, e in wins])
             mix = mix[(mix["platform"] == tp) & (mix["unit"] == unit)] if not mix.empty else mix
-            st.markdown("**What unhappy reviewers (≤3★) complain about, per 14 days**")
-            if mix.empty:
-                st.caption("No labelled ≤3★ reviews in the last 8 weeks for this product.")
-            else:
-                cov = mix.groupby("window").agg(labelled=("labelled", "first"), low=("low_reviews", "first"))
-                st.bar_chart(mix.pivot_table(index="window_start", columns="code", values="reviews", aggfunc="sum").fillna(0))
-                st.caption("Label coverage: " + " · ".join(f"{w}: {r.labelled}/{r.low}" for w, r in cov.iterrows()))
-            if tp == "amazon" and not latest_units.empty:
-                row = latest_units[latest_units["unit"] == unit]
+            m1, m2 = st.columns([3, 2], gap="medium")
+            with m1, st.container(key="panel_issues"):
+                st.markdown("**What unhappy reviewers (≤3★) complain about**")
+                if mix.empty:
+                    st.caption("No labelled ≤3★ reviews in the last 8 weeks for this product.")
+                else:
+                    mix_order = mix.sort_values("window_start")["window"].unique().tolist()
+                    bars = alt.Chart(mix).mark_bar(size=42).encode(
+                        x=alt.X("window:O", sort=mix_order, title=None, axis=alt.Axis(labelAngle=0)),
+                        y=alt.Y("sum(reviews):Q", title="reviews mentioning"),
+                        color=alt.Color("code:N", title="issue", scale=alt.Scale(scheme="tableau10")),
+                        tooltip=["window:N", "code:N", "reviews:Q", "labelled:Q", "low_reviews:Q"])
+                    st.altair_chart(bars.properties(height=260).configure_view(strokeWidth=0).configure(background="#FFFFFF")
+                                    .configure_axis(gridColor="#EEF0F4", labelColor="#4B5563", titleColor="#6B7280"),
+                                    use_container_width=True)
+                    cov = mix.groupby("window").agg(labelled=("labelled", "first"), low=("low_reviews", "first"))
+                    st.caption("Label coverage (labelled / all ≤3★): " +
+                               " · ".join(f"{w}: {r.labelled}/{r.low}" for w, r in cov.iterrows()))
+            with m2, st.container(key="panel_amazon_says"):
+                st.markdown("**Amazon's own summary**")
+                row = latest_units[latest_units["unit"] == unit] if (tp == "amazon" and not latest_units.empty) else pd.DataFrame()
                 if len(row) and "customers_say" in row and row["customers_say"].notna().any():
                     r = row[row["customers_say"].notna()].iloc[-1]
-                    with st.container(border=True):
-                        st.markdown(f"**Amazon's own summary (“Customers say”)**  \n{r['customers_say']}")
-                        if r.get("aspects"):
-                            st.caption("Mentions: " + ", ".join(f"{a} ({n})" for a, n in json.loads(r["aspects"])))
+                    chips = [f"{a} · {n}" for a, n in json.loads(r["aspects"])] if r.get("aspects") else []
+                    st.markdown(quote(r["customers_say"], chips), unsafe_allow_html=True)
+                    st.caption("“Customers say”, generated by Amazon from its reviews; mention counts per aspect.")
+                else:
+                    st.caption("Shown for Amazon listings once the product page has been polled with the new fields.")
 
     # ---------------- returns summary (sheet data)
     with st.expander("Returns & exchanges by product (from the shared sheet)", expanded=False):

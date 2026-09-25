@@ -41,6 +41,8 @@ class Insight:
     where: str               # pointer to the dashboard place holding the evidence
     evidence: pd.DataFrame | None = None
     key: str = ""
+    metric: str = ""         # short headline number for the card, e.g. "10/14"
+    metric_label: str = ""
 
     def as_dict(self) -> dict:
         return {"severity": self.severity, "title": self.title, "detail": self.detail, "where": self.where}
@@ -297,7 +299,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
         out.append(Insight("act", f"Safety complaints · {unit} ({plat.title()})",
                            f"{len(g)} review(s) in the last 30 days mention burning, overheating or injury"
                            + (f": “{quotes[0][:90]}”" if quotes else "") + ".",
-                           "Review issues (AI) → filter heat_safety; Alerts", ev, f"safety:{plat}:{unit}"))
+                           "Review issues (AI) → filter heat_safety; Alerts", ev, f"safety:{plat}:{unit}",
+                           str(len(g)), "reviews · 30 days"))
 
     # 1b. safety pattern over 90 days (products not already flagged for the last 30)
     recent = {(i.key.split(":", 2)[1], i.key.split(":", 2)[2]) for i in out if i.key.startswith("safety:")}
@@ -307,7 +310,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
             ["review_date", "platform", "product", "rating", "title", "body"]].sort_values("review_date", ascending=False)
         out.append(Insight("watch", f"Safety complaints in the last 90 days · {len(older)} product(s)",
                            "; ".join(f"{k[1]} ({k[0].title()}): {len(g)}" for k, g in older.items())
-                           + ". None in the last 30 days.", "Review issues (AI) → heat_safety", ev, "safety90"))
+                           + ". None in the last 30 days.", "Review issues (AI) → heat_safety", ev, "safety90",
+                           str(sum(len(g) for g in older.values())), "reviews · 90 days"))
 
     # 2. stock-outs on Amazon
     if not latest.empty and "availability" in latest:
@@ -315,7 +319,7 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
         if len(oos):
             out.append(Insight("act", f"{len(oos)} Amazon listing(s) not in stock",
                                ", ".join(oos["product"].astype(str)) + ".", "Ratings & reviews → Amazon",
-                               oos[["asin", "product", "availability", "captured_at"]], "stock"))
+                               oos[["asin", "product", "availability", "captured_at"]], "stock", str(len(oos)), "listings"))
 
     # 3. below the rating target
     card = scorecard(inp, today)
@@ -329,7 +333,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
             out.append(Insight(sev, f"{len(g)} of {total} {plat.title()} products are below {inp.target_shown}★",
                                f"Largest by ratings: {names_txt}.",
                                f"Ratings & reviews → {plat.title()} (4.1 calculator)",
-                               g[["product", "rating", "ratings", "status", "reviews 14d", "★ 14d"]], f"below:{plat}"))
+                               g[["product", "rating", "ratings", "status", "reviews 14d", "★ 14d"]], f"below:{plat}",
+                               f"{len(g)}/{total}", f"below {inp.target_shown}★"))
 
     # 4. worsening / improving review trends (latest complete window vs the one before)
     trends = review_trends(unb, today, 3)
@@ -346,10 +351,12 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
             ["review_date", "rating", "title", "body"]].sort_values("review_date", ascending=False)
         if d_star <= -STAR_DROP or d_neg >= NEG_RISE:
             out.append(Insight("watch", f"Reviews getting worse · {unit} ({plat.title()})", detail,
-                               f"Overview → Bi-weekly trends → {unit}", ev, f"worse:{plat}:{unit}"))
+                               f"Overview → Bi-weekly trends → {unit}", ev, f"worse:{plat}:{unit}",
+                               f"{d_star:+.2f}★", "vs previous 14 days"))
         elif d_star >= STAR_DROP or d_neg <= -NEG_RISE:
             out.append(Insight("good", f"Reviews improving · {unit} ({plat.title()})", detail,
-                               f"Overview → Bi-weekly trends → {unit}", ev, f"better:{plat}:{unit}"))
+                               f"Overview → Bi-weekly trends → {unit}", ev, f"better:{plat}:{unit}",
+                               f"{d_star:+.2f}★", "vs previous 14 days"))
 
     # 5. issue spikes among <=3 star reviews: last 28 days vs the 28 before
     cur_mix = issue_mix(unb, inp.labels, today - timedelta(days=27), today)
@@ -368,7 +375,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
                 out.append(Insight("watch", f"Rising complaint · {r.code} on {unit} ({plat.title()})",
                                    f"{share:.0%} of labelled ≤3★ reviews in the last 28 days ({r.reviews}/{r.labelled}) "
                                    f"vs {pshare:.0%} in the 28 days before.",
-                                   f"Review issues (AI) → {unit} · {r.code}", None, f"issue:{plat}:{unit}:{r.code}"))
+                                   f"Review issues (AI) → {unit} · {r.code}", None, f"issue:{plat}:{unit}:{r.code}",
+                                   f"{share:.0%}", "of unhappy reviews"))
 
     # 6. product-page signals once 14 days of history exist
     ch = snapshot_change(inp.snaps, today)
@@ -409,7 +417,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
                 out.append(Insight("watch", f"Return spikes in {last} · {len(ev)} product(s)",
                                    f"Approved returns + exchanges at 1.5× or more their usual monthly level: {worst}. "
                                    f"(Returns data runs through {last}.)",
-                                   "Returns & exchanges → filter product and month", ev, "returns"))
+                                   "Returns & exchanges → filter product and month", ev, "returns",
+                                   str(len(ev)), f"products · {last}"))
 
     # 8. data health
     if inp.last_sync_at:
@@ -442,7 +451,8 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
         if len(ok):
             out.append(Insight("good", f"{len(ok)} product listings at or above {inp.target_shown}★ with no worsening trend",
                                ", ".join(f"{r.product} ({r.platform.title()} {r.rating}★)" for r in ok.head(8).itertuples())
-                               + ("…" if len(ok) > 8 else ""), "Overview → Product scorecard", None, "healthy"))
+                               + ("…" if len(ok) > 8 else ""), "Overview → Product scorecard",
+                               ok[["platform", "product", "rating", "ratings"]], "healthy", str(len(ok)), "listings on target"))
 
     return sorted(out, key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
 
