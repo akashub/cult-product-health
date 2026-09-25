@@ -64,6 +64,9 @@ def add_count_snapshot(con, listing_id: str, product: str, platform: str, displa
     """Snapshot for platforms that show exact per-star counts (Flipkart)."""
     n = sum(counts.values())
     exact = sum(k * v for k, v in counts.items()) / n if n else None
+    if displayed is None and exact is not None:
+        # page variant without JSON-LD: Flipkart displays the exact mean rounded to one decimal
+        displayed = float(f"{exact + 1e-9:.1f}")
     pct = {k: round(100 * v / n) if n else 0 for k, v in counts.items()}
     con.execute(
         "INSERT INTO rating_snapshot (asin, parent_asin, product, captured_at, avg_rating, total_ratings, "

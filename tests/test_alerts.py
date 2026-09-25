@@ -202,3 +202,20 @@ def test_flipkart_target_uses_exact_mean(tmp_path):
     snaps = pd.DataFrame([{"asin": "P1", "platform": "flipkart", "p5": 55, "p4": 22, "p3": 9, "p2": 3, "p1": 11,
                            "avg_rating": 4.1, "hist_avg_min": 4.049, "hist_avg_max": 4.049, "c5": 1, "captured_at": "t"}])
     assert _below_target(snaps, 4.05) == {"P1": True}
+
+
+
+def test_missing_displayed_rating_is_not_a_change(tmp_path):
+    con = store.connect(tmp_path / "a.db")
+    ok = {5: 64, 4: 0, 3: 15, 2: 21, 1: 0}
+    snap(con, "A1", 4.1, ok, "2026-09-24T09:00:00")
+    evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 10))
+    snap(con, "A1", None, ok, "2026-09-24T11:00:00")
+    assert [a for a in evaluate(con, AMZ, ALR, now=datetime(2026, 9, 24, 12)) if a.rule == "rating_change"] == []
+
+
+def test_count_snapshot_fills_missing_displayed_rating(tmp_path):
+    con = store.connect(tmp_path / "a.db")
+    store.add_count_snapshot(con, "P1", "Gun A", "flipkart", None, {1: 2, 2: 1, 3: 2, 4: 5, 5: 10})  # mean 4.0
+    store.add_count_snapshot(con, "P2", "Gun B", "flipkart", None, {1: 0, 2: 0, 3: 0, 4: 1, 5: 1})    # mean 4.5
+    assert [r[0] for r in con.execute("SELECT avg_rating FROM rating_snapshot ORDER BY asin")] == [4.0, 4.5]

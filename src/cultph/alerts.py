@@ -79,6 +79,11 @@ def evaluate(con, amazon_cfg: dict, alert_cfg: dict, sheet_tables: dict[str, pd.
         "SELECT count(*) FROM sqlite_master WHERE name='rating_snapshot'").fetchone()[0] else pd.DataFrame()
     below = _below_target(snaps, target) if not snaps.empty else {}
 
+    if not _state(con, "cleanup_nan_rating_v1"):
+        # remove false 'x → nan' rating alerts raised before snapshots always had a displayed rating
+        con.execute("DELETE FROM alert_event WHERE rule = 'rating_change' AND title LIKE '%nan%'")
+        _set_state(con, "cleanup_nan_rating_v1", True)
+
     baseline = _state(con, "baseline_at")
     if baseline is None:  # first run: remember where we are, send nothing
         _set_state(con, "baseline_at", now.isoformat(timespec="seconds"))
@@ -134,6 +139,8 @@ def evaluate(con, amazon_cfg: dict, alert_cfg: dict, sheet_tables: dict[str, pd.
             if len(full) < 2:
                 continue
             prev, last = full.iloc[-2], full.iloc[-1]
+            if pd.isna(prev["avg_rating"]) or pd.isna(last["avg_rating"]):
+                continue  # a snapshot without a displayed rating can't show a change
             if last["captured_at"] in set(g["captured_at"]) and prev["avg_rating"] != last["avg_rating"]:
                 drop = last["avg_rating"] < prev["avg_rating"]
                 alerts.append(Alert("rating_change", f"{asin}:{last['captured_at']}", "high" if drop else "normal",
