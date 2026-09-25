@@ -193,6 +193,32 @@ def cmd_alerts(args) -> int:
     alerts = evaluate(con, cfg.raw.get("amazon", {}), alert_cfg, load_sheet_tables(LIVE_DB))
     deliver(con, alerts, resolve_channels(alert_cfg.get("channels", "auto")))
     con.commit()
+
+    # bi-weekly digest: one per fixed 14-day period, written on the first run of each period
+    from datetime import date
+
+    from .alerts import Alert
+    from .amazon.store import AMAZON_DB
+    from .config import env
+    from .db import last_runs
+    from .insights import build_insights, load_inputs, save_digest
+
+    ai = cfg.raw.get("ai", {})
+    key = "OPENAI_API_KEY" if ai.get("provider") == "openai" else "ANTHROPIC_API_KEY"
+    inp = load_inputs(AMAZON_DB, LIVE_DB, cfg, last_runs(50), has_ai_key=bool(env(key)))
+    created, period, text = save_digest(con, date.today(), build_insights(inp, date.today()))
+    con.commit()
+    if created:
+        chans = resolve_channels(alert_cfg.get("channels", "auto"))
+        for name in chans:
+            from .alerts import CHANNELS
+
+            try:
+                CHANNELS[name](Alert("digest", period, "normal", f"Bi-weekly product digest ({period})", text))
+            except Exception as e:  # noqa: BLE001
+                print(f"  digest via {name} failed: {e}")
+        print(f"bi-weekly digest for {period} saved" + (f" and sent via {', '.join(chans)}" if chans else
+                                                        " (no channels configured; see the dashboard)"))
     if first:
         print("alerts baseline recorded; nothing sent on the first run")
     print(f"{len(alerts)} new alerts")

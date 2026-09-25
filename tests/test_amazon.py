@@ -168,3 +168,24 @@ def test_real_saved_listing_page():
     assert all(r["title"] and r["body"] for r in rp["reviews"])
     assert not any(r["title"].startswith(("1.0 out of", "5.0 out of")) for r in rp["reviews"])
     assert check_reviews(rp["reviews"]) == []
+
+
+
+def test_performance_signals_from_fixture_and_real_page(tmp_path):
+    from cultph.amazon.parse import bought_estimate
+    assert bought_estimate("3K+ bought in past month") == 3000
+    assert bought_estimate("50+ bought in past month") == 50
+    assert bought_estimate("1.5K+ bought") == 1500 and bought_estimate(None) is None
+    html = (FX / "amazon_product.html").read_text().replace("</body>", """
+      <div id="social-proofing-faceout-title-tk_bought">2K+ bought in past month</div>
+      <span class="a-price"><span class="a-offscreen">₹1,199.00</span></span> <span>M.R.P.: ₹3,479</span>
+      <div id="availability"> In stock. </div>
+      <table><tr><th>Best Sellers Rank</th><td>#616 in Health &amp; Personal Care (See Top 100) #4 in Electric Handheld Massagers</td></tr></table>
+    </body>""")
+    perf = parse_product(html)["performance"]
+    assert (perf["bought_min"], perf["price"], perf["mrp"], perf["availability"]) == (2000, 1199.0, 3479.0, "In stock")
+    assert (perf["bsr_main"], perf["bsr_main_cat"], perf["bsr_sub"], perf["bsr_sub_cat"]) == \
+        (616, "Health & Personal Care", 4, "Electric Handheld Massagers")
+    con = store.connect(tmp_path / "a.db")
+    store.add_snapshot(con, "A1", "Gun A", parse_product(html))
+    assert con.execute("SELECT bought_min, bsr_sub, price FROM rating_snapshot").fetchone() == (2000, 4, 1199.0)

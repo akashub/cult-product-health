@@ -5,6 +5,8 @@ Every chart/table has a drill-down: select a row to see the exact source rows
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import streamlit as st
 
@@ -233,44 +235,171 @@ review listing is available (after login), the per-star filters give raw counts,
             st.dataframe(runs_log.sort_values("at", ascending=False).head(100), hide_index=True, width="stretch")
 
 with tab_over:
-    k = st.columns(4)
-    k[0].metric("Approved returns + exchanges", f"{len(approved):,}")
-    k[1].metric("Exchanges / returns", f"{(approved['mode'] == 'Exchange').sum():,} / {(approved['mode'] == 'Return').sum():,}")
-    k[2].metric("Pending verification", f"{len(pending):,}")
-    k[3].metric("Product-issue tickets", f"{int(tickets['is_product_issue'].sum()):,}")
+    import datetime as _dt
 
-    top_issue = (approved.groupby(["product", "issue"]).size().rename("n").reset_index()
-                 .sort_values("n", ascending=False).drop_duplicates("product").set_index("product"))
-    summary = pd.DataFrame({
-        "approved": approved.groupby("product").size(),
-        "exchange": approved[approved["mode"] == "Exchange"].groupby("product").size(),
-        "return": approved[approved["mode"] == "Return"].groupby("product").size(),
-        "pending": pending.groupby("product").size(),
-        "wms_returns": wms.groupby("product").size(),
-        "product_tickets": tickets[tickets["is_product_issue"] == 1].groupby("product").size(),
-    }).fillna(0).astype(int)
-    if not sales.empty:
-        from cultph.metrics import return_rates
+    from cultph.config import env as _env
+    from cultph.insights import build_insights, load_inputs, review_trends, scorecard, unbiased_reviews, \
+        pool_labels, latest_snapshots, issue_mix, windows
 
-        rr = return_rates(approved, sales, ["product"]).set_index("product")
-        summary["units_sold"] = rr["units"].reindex(summary.index).fillna(0).astype(int)
-        summary["return_pct"] = rr["return_pct"].reindex(summary.index)
-        summary["selling_pct"] = rr["selling_pct"].reindex(summary.index)
-    summary["sku_name_conflicts"] = approved[approved["name_conflict"] == 1].groupby("product").size()
-    summary["sku_name_conflicts"] = summary["sku_name_conflicts"].fillna(0).astype(int)
-    summary["top_issue"] = top_issue["issue"]
-    summary["top_issue_share"] = (top_issue["n"] / summary["approved"]).round(3)
-    st.subheader("By product")
-    st.caption("sku_name_conflicts = approved rows whose model name disagrees with the SKU code "
-               "(counted under the SKU's product). See Data quality.")
-    st.dataframe(summary.sort_values("approved", ascending=False), width="stretch",
-                 column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
-                                "return_pct": st.column_config.NumberColumn(format="percent"),
-                                "selling_pct": st.column_config.NumberColumn(format="percent")})
-    if sales.empty:
-        st.info("Return % and selling % appear here once a units-sold sheet is added (tabs.sales in the config).")
-    st.subheader("Monthly trend (approved returns + exchanges)")
-    st.bar_chart(approved.groupby(["month", "mode"]).size().unstack(fill_value=0))
+    @st.cache_data(ttl=300, show_spinner="Working out insights…")
+    def overview_data(today: _dt.date):
+        cfg = load_config()
+        ai = cfg.raw.get("ai", {})
+        key = "OPENAI_API_KEY" if ai.get("provider") == "openai" else "ANTHROPIC_API_KEY"
+        inp = load_inputs(AMAZON_DB, LIVE_DB, cfg, last_runs(50), has_ai_key=bool(_env(key)))
+        latest = latest_snapshots(inp.snaps)
+        names = pool_labels(latest) if not latest.empty else {}
+        unb = unbiased_reviews(inp.reviews, names)
+        return (build_insights(inp, today), scorecard(inp, today), review_trends(unb, today, 8), unb, inp.labels,
+                latest.assign(unit=latest["pool"].map(names)) if not latest.empty else latest)
+
+    today = _dt.date.today()
+    insights, card, trends, unb, labels_df, latest_units = overview_data(today)
+    unit_category = {u: CATEGORY.get(u.split(" / ")[0].split(" ·")[0], "massager") for u in
+                     (set(card["product"]) if not card.empty else set())}
+
+    # ---------------- insights
+    ICON = {"act": "🔴", "watch": "🟠", "info": "🔵", "good": "🟢"}
+    n = {s: sum(1 for i in insights if i.severity == s) for s in ICON}
+    st.subheader("Insights")
+    c = st.columns(4)
+    c[0].metric("🔴 Act now", n["act"])
+    c[1].metric("🟠 Watch", n["watch"])
+    c[2].metric("🟢 Doing well", n["good"])
+    c[3].metric("🔵 Notes", n["info"])
+    st.caption(f"Computed {today:%d %b %Y} from stored reviews, ratings and returns. Each item says where its data lives; "
+               "open “Show the data” to check it.")
+    for i, ins in enumerate(insights):
+        with st.container(border=True):
+            st.markdown(f"{ICON.get(ins.severity, '•')} **{ins.title}**  \n{ins.detail}")
+            st.caption(f"→ {ins.where}")
+            if ins.evidence is not None and len(ins.evidence):
+                with st.expander(f"Show the data ({len(ins.evidence)} rows)"):
+                    st.dataframe(ins.evidence, hide_index=True, width="stretch")
+
+    # ---------------- scorecard
+    st.subheader("Product scorecard")
+    if card.empty:
+        st.info("No marketplace data yet. Run `uv run cultph amazon` / `cultph flipkart`.")
+    else:
+        sc_plat = st.radio("Platform", ["amazon", "flipkart"], horizontal=True, format_func=str.title, key="sc_plat")
+        view = card[card["platform"] == sc_plat].drop(columns=["platform"])
+        if cat != "All":
+            view = view[view["product"].map(unit_category) == cat]
+        if sc_plat == "flipkart":
+            view = view.drop(columns=["bought/month", "sub-rank", "rank category", "in stock"], errors="ignore")
+        st.caption("Rating = what the marketplace shows. “14d” = reviews posted in the last 14 days (unbiased sample: "
+                   "the marketplace's most-recent list) vs the 14 days before. Bought/month and rank come from Amazon's "
+                   "product page. Top complaint uses AI labels on ≤3★ reviews.")
+        st.dataframe(view, hide_index=True, width="stretch", column_config={
+            "% 1–2★ 14d": st.column_config.NumberColumn(format="percent"),
+            "price": st.column_config.NumberColumn(format="₹%d"),
+            "sub-rank": st.column_config.NumberColumn(format="#%d")})
+
+    # ---------------- bi-weekly trends
+    st.subheader("Bi-weekly review trends")
+    if trends.empty:
+        st.info("No review history yet.")
+    else:
+        tp = st.radio("Platform", ["amazon", "flipkart"], horizontal=True, format_func=str.title, key="tr_plat")
+        tr = trends[trends["platform"] == tp]
+        units = (tr.groupby("unit")["n"].sum().sort_values(ascending=False).index.tolist())
+        if cat != "All":
+            units = [u for u in units if unit_category.get(u, "massager") == cat]
+        if units:
+            unit = st.selectbox("Product", units, key="tr_unit")
+            t = tr[tr["unit"] == unit].sort_values("window", ascending=False)
+            shown = t[t["complete"]].copy()
+            shown["window start"] = pd.to_datetime(shown["start"])  # date index keeps the axis chronological
+            chart = shown.set_index("window start")[["avg_stars"]].rename(columns={"avg_stars": "avg ★ of new reviews"})
+            a, b = st.columns(2)
+            with a:
+                st.markdown("**Average stars of new reviews, per 14 days**")
+                st.line_chart(chart)
+            with b:
+                st.markdown("**New reviews and share that are 1–2★**")
+                st.bar_chart(shown.set_index("window start")[["n"]].rename(columns={"n": "new reviews"}))
+            table = t[["label", "n", "avg_stars", "neg_share", "complete", "latest"]].rename(columns={
+                "label": "14-day window", "avg_stars": "avg ★", "neg_share": "1–2★ share",
+                "complete": "complete data", "latest": "latest (may still fill in)"})
+            st.dataframe(table, hide_index=True, width="stretch",
+                         column_config={"1–2★ share": st.column_config.NumberColumn(format="percent"),
+                                        "avg ★": st.column_config.NumberColumn(format="%.2f")})
+            if (~t["complete"]).any():
+                st.caption("Windows marked incomplete are older than the oldest review the scraper could reach for this "
+                           "listing (Amazon shows at most 100 recent reviews). They're left off the charts rather than "
+                           "shown as a decline.")
+            wins = windows(today, 4)
+            mix = pd.concat([issue_mix(unb, labels_df, s, e).assign(window=f"{s:%d %b}–{e:%d %b}", window_start=pd.Timestamp(s))
+                             for s, e in wins])
+            mix = mix[(mix["platform"] == tp) & (mix["unit"] == unit)] if not mix.empty else mix
+            st.markdown("**What unhappy reviewers (≤3★) complain about, per 14 days**")
+            if mix.empty:
+                st.caption("No labelled ≤3★ reviews in the last 8 weeks for this product.")
+            else:
+                cov = mix.groupby("window").agg(labelled=("labelled", "first"), low=("low_reviews", "first"))
+                st.bar_chart(mix.pivot_table(index="window_start", columns="code", values="reviews", aggfunc="sum").fillna(0))
+                st.caption("Label coverage: " + " · ".join(f"{w}: {r.labelled}/{r.low}" for w, r in cov.iterrows()))
+            if tp == "amazon" and not latest_units.empty:
+                row = latest_units[latest_units["unit"] == unit]
+                if len(row) and "customers_say" in row and row["customers_say"].notna().any():
+                    r = row[row["customers_say"].notna()].iloc[-1]
+                    with st.container(border=True):
+                        st.markdown(f"**Amazon's own summary (“Customers say”)**  \n{r['customers_say']}")
+                        if r.get("aspects"):
+                            st.caption("Mentions: " + ", ".join(f"{a} ({n})" for a, n in json.loads(r["aspects"])))
+
+    # ---------------- returns summary (sheet data)
+    with st.expander("Returns & exchanges by product (from the shared sheet)", expanded=False):
+        k = st.columns(4)
+        k[0].metric("Approved returns + exchanges", f"{len(approved):,}")
+        k[1].metric("Exchanges / returns", f"{(approved['mode'] == 'Exchange').sum():,} / {(approved['mode'] == 'Return').sum():,}")
+        k[2].metric("Pending verification", f"{len(pending):,}")
+        k[3].metric("Product-issue tickets", f"{int(tickets['is_product_issue'].sum()):,}")
+        top_issue = (approved.groupby(["product", "issue"]).size().rename("n").reset_index()
+                     .sort_values("n", ascending=False).drop_duplicates("product").set_index("product"))
+        summary = pd.DataFrame({
+            "approved": approved.groupby("product").size(),
+            "exchange": approved[approved["mode"] == "Exchange"].groupby("product").size(),
+            "return": approved[approved["mode"] == "Return"].groupby("product").size(),
+            "pending": pending.groupby("product").size(),
+            "wms_returns": wms.groupby("product").size(),
+            "product_tickets": tickets[tickets["is_product_issue"] == 1].groupby("product").size(),
+        }).fillna(0).astype(int)
+        if not sales.empty:
+            from cultph.metrics import return_rates
+
+            rr = return_rates(approved, sales, ["product"]).set_index("product")
+            summary["units_sold"] = rr["units"].reindex(summary.index).fillna(0).astype(int)
+            summary["return_pct"] = rr["return_pct"].reindex(summary.index)
+            summary["selling_pct"] = rr["selling_pct"].reindex(summary.index)
+        summary["sku_name_conflicts"] = approved[approved["name_conflict"] == 1].groupby("product").size()
+        summary["sku_name_conflicts"] = summary["sku_name_conflicts"].fillna(0).astype(int)
+        summary["top_issue"] = top_issue["issue"]
+        summary["top_issue_share"] = (top_issue["n"] / summary["approved"]).round(3)
+        st.caption("sku_name_conflicts = approved rows whose model name disagrees with the SKU code "
+                   "(counted under the SKU's product). See Data quality.")
+        st.dataframe(summary.sort_values("approved", ascending=False), width="stretch",
+                     column_config={"top_issue_share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+                                    "return_pct": st.column_config.NumberColumn(format="percent"),
+                                    "selling_pct": st.column_config.NumberColumn(format="percent")})
+        if sales.empty:
+            st.info("Return % and selling % appear here once a units-sold sheet is added (tabs.sales in the config).")
+        st.markdown("**Monthly approved returns + exchanges**")
+        st.bar_chart(approved.groupby(["month", "mode"]).size().unstack(fill_value=0))
+
+    # ---------------- digest history
+    with st.expander("Bi-weekly digests"):
+        try:
+            with sqlite3.connect(AMAZON_DB) as _con:
+                dg = pd.read_sql("SELECT period_start, created_at, body FROM digest ORDER BY period_start DESC", _con)
+        except Exception:  # noqa: BLE001
+            dg = pd.DataFrame()
+        if dg.empty:
+            st.caption("The first digest is written on the next scheduled run, then every 14 days.")
+        for r in dg.itertuples():
+            st.markdown(f"**Period starting {r.period_start}** · written {r.created_at[:16]}")
+            st.text(r.body)
 
 with tab_iss:
     import json

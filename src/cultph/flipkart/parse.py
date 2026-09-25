@@ -36,8 +36,10 @@ def parse_product(html: str) -> dict:
         for item in data if isinstance(data, list) else [data]:
             if item.get("@type") == "Product":
                 agg = item.get("aggregateRating") or {}
+                offers = item.get("offers") or {}
                 out.update(title=item.get("name"), avg_rating=agg.get("ratingValue"),
-                           total_ratings=agg.get("ratingCount"), total_reviews=agg.get("reviewCount"))
+                           total_ratings=agg.get("ratingCount"), total_reviews=agg.get("reviewCount"),
+                           price=offers.get("price") if isinstance(offers, dict) else None)
     m = re.search(r'href="(/[^"?]*?/product-reviews/itm[0-9a-z]+)\?pid=(\w+)((?:&amp;|&)lid=(\w+))?', html)
     if m:
         out["reviews_path"] = f"{m.group(1)}?pid={m.group(2)}" + (f"&lid={m.group(4)}" if m.group(4) else "")

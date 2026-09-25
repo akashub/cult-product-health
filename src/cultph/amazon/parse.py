@@ -100,6 +100,59 @@ def parse_histogram(soup) -> dict[int, int]:
     return hist
 
 
+def _money(s: str | None) -> float | None:
+    m = re.search(r"₹\s*([\d,]+(?:\.\d+)?)", s or "")
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def bought_estimate(text: str | None) -> int | None:
+    """'3K+ bought in past month' -> 3000 (a lower bound)."""
+    m = re.search(r"([\d.]+)\s*([KkLl]?)\+?\s*bought", text or "")
+    if not m:
+        return None
+    mult = {"k": 1_000, "l": 100_000}.get(m.group(2).lower(), 1)
+    return int(float(m.group(1)) * mult)
+
+
+def parse_performance(soup) -> dict:
+    """Product-page performance signals: sales proxy, rank, price, stock, Amazon's review summary."""
+    text = soup.get_text(" ", strip=True)
+    bought = _text(soup.select_one("#social-proofing-faceout-title-tk_bought"))
+    if not bought:
+        m = re.search(r"[\d.,]+[KkLl]?\+? bought in past month", text)
+        bought = m.group(0) if m else None
+    ranks = []
+    th = soup.find(string=re.compile(r"Best Sellers Rank"))
+    row = th.find_parent(["tr", "li"]) if th else None
+    if row:
+        ranks = [(int(n.replace(",", "")), cat.strip()) for n, cat in
+                 re.findall(r"#([\d,]+) in ([^()#]+?)(?=\s*(?:\(|#|$))", row.get_text(" ", strip=True))]
+    price = _money(_text(soup.select_one(".a-price .a-offscreen")))
+    mrp_m = re.search(r"M\.R\.P\.?:?\s*₹\s?([\d,]+)", text)
+    mrp = float(mrp_m.group(1).replace(",", "")) if mrp_m else None
+    avail = _text(soup.select_one("#availability"))
+    lines = [ln.strip() for ln in soup.get_text("\n").split("\n") if ln.strip()]
+    summary, aspects = None, []
+    if "Customers say" in lines:
+        i = lines.index("Customers say")
+        if i + 1 < len(lines) and len(lines[i + 1]) > 40:
+            summary = lines[i + 1]
+        j = next((k for k in range(i, min(i + 6, len(lines))) if lines[k].startswith("Select to learn")), None)
+        if j is not None:
+            k = j + 1
+            while k + 1 < len(lines) and re.fullmatch(r"\(\d[\d,]*\)", lines[k + 1]) and len(aspects) < 12:
+                aspects.append((lines[k], int(lines[k + 1].strip("()").replace(",", ""))))
+                k += 2
+    return {
+        "bought_text": bought, "bought_min": bought_estimate(bought),
+        "bsr_main": ranks[0][0] if ranks else None, "bsr_main_cat": ranks[0][1] if ranks else None,
+        "bsr_sub": ranks[1][0] if len(ranks) > 1 else None, "bsr_sub_cat": ranks[1][1] if len(ranks) > 1 else None,
+        "price": price, "mrp": mrp if mrp and price and mrp >= price else None,
+        "availability": avail.split(".")[0] if avail else None,
+        "customers_say": summary, "aspects": aspects,
+    }
+
+
 def parse_product(html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     avg = _num(_text(_first(soup, '[data-hook="rating-out-of-text"]', "#acrPopover span.a-icon-alt")))
@@ -112,6 +165,7 @@ def parse_product(html: str) -> dict:
         "total_ratings": int(total) if total is not None else None,
         "hist_pct": parse_histogram(soup),
         "reviews": parse_reviews(soup),
+        "performance": parse_performance(soup),
     }
 
 
