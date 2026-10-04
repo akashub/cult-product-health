@@ -9,7 +9,7 @@ git clone https://github.com/akashub/cult-product-health.git
 cd cult-product-health
 ```
 
-Copy the two files from the handover zip you received privately, `config.private.yaml` and `PLAN.private.md`, into this folder. They hold the Cult product list and sheet layout, and are never stored on GitHub.
+Unzip the handover zip you received privately into this folder (keep its paths). It contains `config.private.yaml` and `PLAN.private.md` (the Cult product list and sheet layout, never stored on GitHub). If it was made with `--with-data`, it also contains `data/amazon.db`: the reviews, ratings, photos, AI labels and trend history collected so far, so the dashboard isn't empty on day one.
 
 - macOS / Linux: `./scripts/bootstrap.sh`
 - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1`
