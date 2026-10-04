@@ -112,7 +112,7 @@ def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver,
             return None, "unparseable event_date"
         mode = clean_text(get(row, "mode"))
         if spec and spec.get("mode_map"):
-            # e.g. an 'Approval' column: "Exchange Apporved " -> Exchange (unmapped values stay None and are flagged)
+            # e.g. a free-text approval column with typos -> Exchange/Return (unmapped values stay None and are flagged)
             mode = {alias_key(k): v for k, v in spec["mode_map"].items()}.get(alias_key(mode or ""))
         if spec and "platform" in spec.get("columns", {}):
             marketplace, inferred = normalize_platform(get(row, "platform"), order_id, cfg.platform_map)

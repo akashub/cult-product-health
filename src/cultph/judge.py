@@ -113,7 +113,7 @@ def run_checks(res: IngestResult, cfg: Config, source=None) -> list[dict]:
                           f"{doubles} {col}s entered in two tabs on the same day; "
                           f"{len(cross)} {col}s appear in both tabs on different dates (repeat claims, kept)"))
 
-    # 6d. Every approved row has a known mode (Approval values like "Exchange Apporved " must be mapped)
+    # 6d. Every approved row has a known mode (free-text approval values must all be mapped)
     if appr is not None and not appr.empty:
         bad = appr[~appr["mode"].isin(["Exchange", "Return"])]
         out.append(_check("mode_mapped", FAIL if len(bad) else PASS,
