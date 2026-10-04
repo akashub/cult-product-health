@@ -67,6 +67,31 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 [class*="st-key-card_"] [data-testid="stExpander"] summary { padding: 4px 0; font-size:.82rem; color:#4F46E5; }
 [class*="st-key-card_"] [data-testid="stExpander"] summary:hover { color:#3730A3; }
 
+/* compact insight board */
+.ib-head { display:flex; align-items:center; gap:8px; margin: 2px 0 8px 0; }
+.ib-head .t { font-weight:800; font-size:.95rem; color:#111827; }
+.ib-head .c { border-radius:999px; padding:1px 9px; font-size:.75rem; font-weight:800; }
+.ib-empty { color:#9CA3AF; font-size:.85rem; padding:10px 2px; }
+[class*="st-key-ib_"] { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:12px; padding:10px 12px 4px 12px; gap:6px; }
+[class*="st-key-ib_"] [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+[class*="st-key-ib_"] [data-testid="stMarkdownContainer"] p { margin-bottom: 0; }
+[class*="st-key-ib_act"] { border-left:4px solid #DC2626; }
+[class*="st-key-ib_watch"] { border-left:4px solid #D97706; }
+[class*="st-key-ib_good"] { border-left:4px solid #059669; }
+.ib { display:flex; gap:10px; align-items:flex-start; }
+.ib .m { flex:0 0 auto; min-width:52px; text-align:center; border-radius:8px; padding:3px 6px; font-weight:800; font-size:.9rem; line-height:1.3; }
+.ib .x { min-width:0; }
+.ib .tt { font-weight:700; font-size:.88rem; color:#111827; line-height:1.3; }
+.ib .ss { font-size:.8rem; color:#4B5563; line-height:1.35; margin-top:2px; }
+[class*="st-key-ib_"] [data-testid="stExpander"] details { border:none; background:transparent; }
+[class*="st-key-ib_"] [data-testid="stExpander"] { margin-top: 0; }
+[class*="st-key-ib_"] [data-testid="stExpander"] summary { padding:0 0 2px 62px; font-size:.76rem; color:#6366F1; min-height:0; }
+.ib-detail { font-size:.82rem; line-height:1.45; color:#374151; }
+.ib-detail .w { color:#6B7280; font-size:.76rem; margin-top:4px; }
+[class*="st-key-ib_"] [data-testid="stExpanderDetails"] { padding: 4px 4px 8px 4px; }
+.cph-statusline { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.cph-statusline span { border-radius:999px; padding:3px 10px; font-size:.78rem; font-weight:700; }
+
 /* generic panels */
 [class*="st-key-panel_"] { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:14px; padding:14px 16px; }
 .cph-quote { background:#F9FAFB; border-left:3px solid #A5B4FC; padding:10px 14px; border-radius:8px; color:#374151; font-size:.9rem; }
@@ -271,3 +296,27 @@ def signal_bars(signals: dict, labels: dict, weights: dict) -> str:
             rows.append(f'<div class="sig"><div class="top" style="color:#9CA3AF"><span>{e(labels[k])}</span>'
                         f'<span>not enough data</span></div></div>')
     return "".join(rows)
+
+
+def board_head(sev: str, count: int) -> str:
+    c = SEVERITY[sev]
+    return (f'<div class="ib-head"><span class="t">{e(c["label"])}</span>'
+            f'<span class="c" style="background:{c["tint"]};color:{c["color"]}">{count}</span></div>')
+
+
+def board_item(ins) -> str:
+    c = SEVERITY.get(ins.severity, SEVERITY["info"])
+    metric = (f'<div class="m" style="background:{c["tint"]};color:{c["color"]}">{e(ins.metric)}</div>'
+              if getattr(ins, "metric", "") else "")
+    short = getattr(ins, "short", "") or ins.detail
+    if len(short) > 120:
+        short = short[:117].rstrip() + "…"
+    return f'<div class="ib">{metric}<div class="x"><div class="tt">{e(ins.title)}</div><div class="ss">{e(short)}</div></div></div>'
+
+
+def status_line(counts: dict) -> str:
+    parts = []
+    for sev in ("act", "watch", "good"):
+        c = SEVERITY[sev]
+        parts.append(f'<span style="background:{c["tint"]};color:{c["color"]}">{counts.get(sev, 0)} {e(c["label"].lower())}</span>')
+    return f'<div class="cph-statusline">{"".join(parts)}</div>'

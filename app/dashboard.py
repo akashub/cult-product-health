@@ -270,14 +270,15 @@ with tab_over:
 
     # ---------------- insights
     import altair as alt
+    from style import board_head, board_item, status_line
 
     n = {s: sum(1 for i in insights if i.severity == s) for s in SEVERITY}
-    st.markdown(section("What needs attention", f"computed {today:%d %b %Y} · every card links to its data"),
-                unsafe_allow_html=True)
-    st.markdown(tiles(n, {"act": "problems to fix", "watch": "early warning signs", "good": "performing well",
-                          "info": "data & pipeline notes"}), unsafe_allow_html=True)
+    h1, h2 = st.columns([3, 2])
+    h1.markdown(section("What needs attention", f"as of {today:%d %b %Y}"), unsafe_allow_html=True)
+    with h2:
+        st.markdown('<div style="height:30px"></div>' + status_line(n), unsafe_allow_html=True)
 
-    # portfolio at a glance
+    # portfolio at a glance (one row of key numbers)
     if not card.empty:
         amz = card[card["platform"] == "amazon"]
         w_avg = (amz["rating"] * amz["ratings"]).sum() / max(amz["ratings"].sum(), 1) if len(amz) else 0
@@ -291,24 +292,30 @@ with tab_over:
         if not approved.empty:
             last_m = sorted(approved["month"].dropna().unique())[-1]
             glance_items.append(("Returns + exchanges", f"{int((approved['month'] == last_m).sum()):,}", f"in {last_m} (sheet)"))
-        st.markdown('<div style="height:10px"></div>' + glance(glance_items), unsafe_allow_html=True)
-
-    main = [i for i in insights if i.severity != "info"]
-    notes = [i for i in insights if i.severity == "info"]
+        st.markdown(glance(glance_items), unsafe_allow_html=True)
     st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
-    cols = st.columns(2, gap="medium")
-    for idx, ins in enumerate(main):
-        with cols[idx % 2]:
-            with st.container(key=f"card_{ins.severity}_{idx}"):
-                st.markdown(card_html(ins), unsafe_allow_html=True)
-                if ins.evidence is not None and len(ins.evidence):
-                    with st.expander(f"Show the data · {len(ins.evidence)} rows"):
-                        st.dataframe(ins.evidence, hide_index=True, width="stretch")
+
+    cols = st.columns(3, gap="medium")
+    for col, sev in zip(cols, ("act", "watch", "good")):
+        items = [i for i in insights if i.severity == sev]
+        with col:
+            st.markdown(board_head(sev, len(items)), unsafe_allow_html=True)
+            if not items:
+                st.markdown('<div class="ib-empty">Nothing here right now.</div>', unsafe_allow_html=True)
+            for idx, ins in enumerate(items):
+                with st.container(key=f"ib_{sev}_{idx}"):
+                    st.markdown(board_item(ins), unsafe_allow_html=True)
+                    with st.expander("Details"):
+                        st.markdown(f"<div class='ib-detail'>{ins.detail}<div class='w'>↗ {ins.where}</div></div>",
+                                    unsafe_allow_html=True)
+                        if ins.evidence is not None and len(ins.evidence):
+                            st.dataframe(ins.evidence, hide_index=True, width="stretch", height=min(36 * (len(ins.evidence) + 1), 300))
+    notes = [i for i in insights if i.severity == "info"]
     if notes:
         with st.expander(f"Data & pipeline notes · {len(notes)}"):
-            for idx, ins in enumerate(notes):
-                with st.container(key=f"card_info_{idx}"):
-                    st.markdown(card_html(ins), unsafe_allow_html=True)
+            for ins in notes:
+                st.markdown(f"**{ins.title}** — {ins.detail}  \n<span style='color:#6B7280;font-size:.8rem'>↗ {ins.where}</span>",
+                            unsafe_allow_html=True)
 
     # ---------------- scorecard
     st.markdown(section("Product scorecard", "one row per product · ratings, sales signals and recent reviews"),
