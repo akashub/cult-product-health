@@ -30,11 +30,16 @@ def monthly_counts(df: pd.DataFrame) -> pd.Series:
     return df["month"].value_counts().sort_index()
 
 
-def dashboard_recompute(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+def dashboard_recompute(tables: dict[str, pd.DataFrame], specs: list[str] | None = None) -> pd.DataFrame:
     """Recreates the sheet's 'Approved' and 'Total' (approved + pending) columns,
-    one row per month present in either tab, oldest first."""
-    appr = monthly_counts(tables.get("approved", pd.DataFrame()))
-    pend = monthly_counts(tables.get("pending", pd.DataFrame()))
+    one row per month present in either tab, oldest first. `specs` limits the rows to
+    the tabs the hand-made pivot actually covers."""
+    def pick(df):
+        if specs and not df.empty and "src_spec" in df:
+            return df[df["src_spec"].isin(specs)]
+        return df
+    appr = monthly_counts(pick(tables.get("approved", pd.DataFrame())))
+    pend = monthly_counts(pick(tables.get("pending", pd.DataFrame())))
     months = sorted(set(appr.index) | set(pend.index))
     return pd.DataFrame([{"month": m, "approved": int(appr.get(m, 0)), "total": int(appr.get(m, 0) + pend.get(m, 0))}
                          for m in months])
@@ -81,3 +86,9 @@ def return_rates(approved: pd.DataFrame, sales: pd.DataFrame, by: list[str]) -> 
     out["return_pct"] = out["returns"] / out["units"].where(out["units"] > 0)
     out["selling_pct"] = out["units"] / out["units"].sum() if out["units"].sum() else 0.0
     return out.sort_values(by).reset_index(drop=True)
+
+
+def role_month_coverage(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Rows per role per month: shows which months each kind of data actually covers."""
+    out = {role: df["month"].value_counts() for role, df in tables.items() if not df.empty and "month" in df}
+    return pd.DataFrame(out).fillna(0).astype(int).sort_index()

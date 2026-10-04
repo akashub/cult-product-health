@@ -30,6 +30,7 @@ class IngestResult:
     source_rows: dict[str, int] = field(default_factory=dict)  # non-blank rows per role
     rejects: list[dict] = field(default_factory=list)
     header_errors: list[str] = field(default_factory=list)
+    tab_map: dict[str, str] = field(default_factory=dict)  # spec id -> tab used
 
 
 class ProductResolver:
@@ -79,7 +80,8 @@ def _channel_platform(channel: str | None, prefixes: list[tuple[str, str]]) -> s
     return "Other"
 
 
-def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver) -> tuple[dict | None, str | None]:
+def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver,
+               spec: dict | None = None) -> tuple[dict | None, str | None]:
     """Returns (record, reject_reason)."""
     df = cfg.dayfirst
     if role == "tickets":
@@ -109,7 +111,13 @@ def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver) -> t
         if event is None:
             return None, "unparseable event_date"
         mode = clean_text(get(row, "mode"))
-        marketplace, inferred = normalize_platform(None, order_id, cfg.platform_map)
+        if spec and spec.get("mode_map"):
+            # e.g. an 'Approval' column: "Exchange Apporved " -> Exchange (unmapped values stay None and are flagged)
+            mode = {alias_key(k): v for k, v in spec["mode_map"].items()}.get(alias_key(mode or ""))
+        if spec and "platform" in spec.get("columns", {}):
+            marketplace, inferred = normalize_platform(get(row, "platform"), order_id, cfg.platform_map)
+        else:
+            marketplace, inferred = normalize_platform(None, order_id, cfg.platform_map)
         amount = get(row, "amount")
         try:
             amount = float(amount) if not is_blank(amount) else None
@@ -124,6 +132,7 @@ def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver) -> t
             "amount": amount,
             "issue": clean_text(get(row, "issue")),
             "mode": mode.title() if mode else None,
+            "mode_raw": clean_text(get(row, "mode")),
             "channel": clean_text(get(row, "channel")),
             "platform": marketplace,
             "platform_inferred": inferred,
@@ -203,28 +212,67 @@ def _parse_row(role: str, get, row, cfg: Config, resolver: ProductResolver) -> t
     return rec, None
 
 
+def resolve_tabs(source, cfg: Config) -> tuple[dict[str, str], list[str]]:
+    """spec id -> tab name. A spec's tab is its configured name if present, else the one tab
+    whose headers contain all of the spec's 'match' headers (tab names change; columns don't)."""
+    names = source.tab_names() if hasattr(source, "tab_names") else []
+    headers = {}
+    for n in names:
+        try:
+            h, _ = source.table(n)
+        except Exception:  # noqa: BLE001 - unreadable/pivot tabs are just skipped
+            continue
+        headers[n] = {str(x).strip() for x in h if x not in (None, "")}
+    chosen, errors, used = {}, [], set()
+    for role in ROLES:
+        for sp in cfg.tab_specs(role):
+            if sp.get("name") in names:
+                chosen[sp["id"]] = sp["name"]
+                used.add(sp["name"])
+                continue
+            want = {str(m).strip() for m in sp["match"]}
+            hits = [n for n, h in headers.items() if want <= h and n not in used]
+            if len(hits) == 1:
+                chosen[sp["id"]] = hits[0]
+                used.add(hits[0])
+            elif not hits:
+                (errors if not sp.get("optional") else []).append(
+                    f"{sp['id']}: no tab has all of {sorted(want)}")
+            else:
+                errors.append(f"{sp['id']}: several tabs match ({', '.join(hits)}); set 'name' in the config")
+    return chosen, errors
+
+
 def ingest(source, cfg: Config) -> IngestResult:
     res = IngestResult()
     resolver = ProductResolver(cfg)
+    chosen, errs = resolve_tabs(source, cfg)
+    res.header_errors.extend(errs)
+    res.tab_map = chosen
     for role in ROLES:
-        tab_cfg = cfg.tabs.get(role)
-        if not tab_cfg:
+        specs = cfg.tab_specs(role)
+        if not specs:
             continue
-        headers, rows = source.table(tab_cfg["name"])
-        get = _column_getter(headers, tab_cfg["columns"], role, res.header_errors)
         records, nonblank = [], 0
-        for i, row in enumerate(rows):
-            if all(is_blank(v) for v in row):
+        for sp in specs:
+            tab = chosen.get(sp["id"])
+            if not tab:
                 continue
-            nonblank += 1
-            src_row = i + 2  # header is sheet row 1
-            rec, reason = _parse_row(role, get, row, cfg, resolver)
-            if rec is None:
-                res.rejects.append({"role": role, "src_tab": tab_cfg["name"], "src_row": src_row, "reason": reason})
-                continue
-            rec["src_tab"] = tab_cfg["name"]
-            rec["src_row"] = src_row
-            records.append(rec)
+            headers, rows = source.table(tab)
+            get = _column_getter(headers, sp["columns"], sp["id"], res.header_errors)
+            for i, row in enumerate(rows):
+                if all(is_blank(v) for v in row):
+                    continue
+                nonblank += 1
+                src_row = i + 2  # header is sheet row 1
+                rec, reason = _parse_row(role, get, row, cfg, resolver, sp)
+                if rec is None:
+                    res.rejects.append({"role": role, "src_tab": tab, "src_row": src_row, "reason": reason})
+                    continue
+                rec["src_tab"] = tab
+                rec["src_spec"] = sp["id"]
+                rec["src_row"] = src_row
+                records.append(rec)
         res.source_rows[role] = nonblank
         df = pd.DataFrame.from_records(records)
         if not df.empty:

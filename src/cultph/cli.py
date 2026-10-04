@@ -22,15 +22,13 @@ import argparse
 import sys
 
 from .config import load_config
-from .db import publish
-from .ingest import ingest
-from .judge import run_checks, verdict
 from .sources import list_shared_sheets, open_source
 
 ICON = {"pass": "✔", "warn": "!", "fail": "✘"}
 
 
 def cmd_sync(args) -> int:
+    from .pipeline import sync_from
     from .sources import GoogleAuthError
 
     cfg = load_config(args.config)
@@ -39,15 +37,12 @@ def cmd_sync(args) -> int:
     except (GoogleAuthError, FileNotFoundError) as e:
         print(f" ✘ source: {e}")
         return 1
-    res = ingest(source, cfg)
-    checks = run_checks(res, cfg, source)
-    status = verdict(checks)
-    meta = {"config": cfg.path.name, "source": cfg.source, "source_rows": res.source_rows}
-    for c in checks:
+    label = cfg.source.get("spreadsheet_id") or cfg.source.get("path")
+    r = sync_from(source, cfg, f"{cfg.source.get('type')}:{label}")
+    for c in r["checks"]:
         print(f" {ICON[c['status']]} {c['check']:<28} {c['detail']}")
-    published = publish(res.tables, res.rejects, checks, meta, status)
-    print(f"\nverdict: {status.upper()} — {'published' if published else 'BLOCKED, previous snapshot kept'}")
-    return 0 if published else 1
+    print(f"\nverdict: {r['status'].upper()} — {'published' if r['published'] else 'BLOCKED, previous snapshot kept'}")
+    return 0 if r["published"] else 1
 
 
 def cmd_sheets(args) -> int:

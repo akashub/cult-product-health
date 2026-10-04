@@ -29,6 +29,7 @@ def test_month_label():
     assert month_label_number("1~January") == 1
     assert month_label_number("12~December") == 12
     assert month_label_number("junk") is None
+    assert month_label_number("August") == 8 and month_label_number("sep") == 9 and month_label_number("Sept") == 9
 
 
 def test_platform_inference():

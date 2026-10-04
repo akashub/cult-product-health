@@ -38,6 +38,21 @@ class Config:
     def tabs(self) -> dict:
         return self.raw["tabs"]
 
+    def tab_specs(self, role: str) -> list[dict]:
+        """A role maps to one tab spec or a list of them. Each spec: id, optional name, optional
+        match (headers that identify the tab), columns, and role-specific value maps."""
+        raw = self.tabs.get(role)
+        if not raw:
+            return []
+        specs = raw if isinstance(raw, list) else [raw]
+        out = []
+        for i, sp in enumerate(specs):
+            sp = dict(sp)
+            sp.setdefault("id", role if len(specs) == 1 else f"{role}_{i + 1}")
+            sp.setdefault("match", [str(h).strip() for h in sp["columns"].values()])
+            out.append(sp)
+        return out
+
     @property
     def dayfirst(self) -> bool:
         return bool(self.raw.get("dayfirst", True))
@@ -94,6 +109,11 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         path = Path(env) if env else (private if private.exists() else ROOT / "config.example.yaml")
     path = Path(path)
     raw = yaml.safe_load(path.read_text())
+    override = DATA_DIR / "source.json"   # a source picked in the dashboard wins over the file's default
+    if override.exists() and path.name == "config.private.yaml":
+        import json
+
+        raw["source"] = {**raw.get("source", {}), **json.loads(override.read_text())}
     products = [
         Product(
             name=p["name"],

@@ -36,6 +36,9 @@ class XlsxSource:
     def grid(self, tab: str) -> list[list]:
         return [list(r) for r in self._wb[tab].iter_rows(values_only=True)]
 
+    def tab_names(self) -> list[str]:
+        return list(self._wb.sheetnames)
+
 
 class GoogleAuthError(RuntimeError):
     pass
@@ -85,6 +88,9 @@ class GSheetSource:
 
     def grid(self, tab: str) -> list[list]:
         return self._sh.worksheet(tab).get_all_values(value_render_option="UNFORMATTED_VALUE")
+
+    def tab_names(self) -> list[str]:
+        return [ws.title for ws in self._sh.worksheets()]
 
 
 def list_shared_sheets(auth: str = "oauth") -> list[dict]:

@@ -97,16 +97,51 @@ def run_checks(res: IngestResult, cfg: Config, source=None) -> list[dict]:
         if no_sales:
             out.append(_check("sales_coverage", WARN, f"{len(no_sales)} products have returns but no sales rows: {no_sales[:5]}"))
 
+    # 6c. Same order/ticket in two tabs of the same role (e.g. an old and a new layout overlapping)
+    for role, col in (("approved", "order_id"), ("tickets", "ticket_id")):
+        df = res.tables.get(role)
+        if df is None or df.empty or "src_spec" not in df or df["src_spec"].nunique() < 2:
+            continue
+        ids = df.dropna(subset=[col]).groupby(col)["src_spec"].nunique()
+        cross = ids[ids > 1]
+        # different dates = a repeat claim (e.g. a replacement that failed again), not a double entry
+        dup = df[df[col].isin(cross.index)]
+        same_day = dup.assign(d=pd.to_datetime(dup.get("event_date", dup.get("created_at"))).dt.date) \
+            .groupby([col, "d"])["src_spec"].nunique()
+        doubles = int((same_day > 1).sum())
+        out.append(_check(f"cross_tab_duplicates:{role}", FAIL if doubles else PASS,
+                          f"{doubles} {col}s entered in two tabs on the same day; "
+                          f"{len(cross)} {col}s appear in both tabs on different dates (repeat claims, kept)"))
+
+    # 6d. Every approved row has a known mode (Approval values like "Exchange Apporved " must be mapped)
+    if appr is not None and not appr.empty:
+        bad = appr[~appr["mode"].isin(["Exchange", "Return"])]
+        out.append(_check("mode_mapped", FAIL if len(bad) else PASS,
+                          f"{len(bad)} approved rows with an unmapped return/exchange value"
+                          + (f": {bad['mode_raw'].fillna('(blank)').value_counts().head(5).to_dict()}" if len(bad) else "")))
+
+    # 6e. Which months each role covers (a role missing for a month is shown, not treated as zero)
+    from .metrics import role_month_coverage
+    cov = role_month_coverage(res.tables)
+    if not cov.empty:
+        gaps = [f"{m}: no {r}" for m, row in cov.iterrows() for r, n in row.items()
+                if n == 0 and r in ("pending", "wms")]
+        out.append(_check("role_coverage", WARN if gaps else PASS,
+                          ("months without some data: " + "; ".join(gaps[:6])) if gaps else "every role covers every month"))
+
     # 7. Reconcile against the sheet's own Dashboard numbers (month rows + grand total)
     dc = cfg.dashboard_check
     if dc and source is not None:
         try:
-            block = find_block(source.grid(dc["tab"]), dc["approved_header"], dc["total_header"])
+            tabs = dc["tab"] if isinstance(dc["tab"], list) else [dc["tab"]]
+            names = source.tab_names() if hasattr(source, "tab_names") else tabs
+            tab = next((t for t in tabs if t in names), tabs[0])
+            block = find_block(source.grid(tab), dc["approved_header"], dc["total_header"])
             block = [(int(float(a)), int(float(b))) for a, b in block]
         except Exception as e:  # noqa: BLE001 - surface any read problem as a failed check
             out.append(_check("dashboard_reconcile", FAIL, f"could not read dashboard block: {e}"))
         else:
-            got = dashboard_recompute(res.tables)
+            got = dashboard_recompute(res.tables, dc.get("specs"))
             sheet_months, sheet_total = block[:-1], block[-1] if block else (0, 0)
             diffs = []
             if len(sheet_months) != len(got):

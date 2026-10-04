@@ -39,6 +39,10 @@ class _Sheet:
     def worksheet(self, name):
         return _WS(self.tabs[name])
 
+    def worksheets(self):
+        from types import SimpleNamespace
+        return [SimpleNamespace(title=t) for t in self.tabs]
+
 
 def replay(xlsx_path) -> GSheetSource:
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)

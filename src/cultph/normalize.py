@@ -78,14 +78,21 @@ def parse_dt(v, dayfirst: bool = True) -> datetime | None:
     return None if pd.isna(ts) else ts.to_pydatetime()
 
 
+_FULL = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+         "november", "december"]
+_MONTH_NAMES = {**{m: i for i, m in enumerate(_FULL, 1)}, **{m[:3]: i for i, m in enumerate(_FULL, 1)}, "sept": 9}
+
+
 def month_label_number(v) -> int | None:
-    """'1~January' -> 1. Returns None when the label is missing or unparseable."""
+    """'1~January' or 'August' or 'Sep' -> month number. None when missing or unparseable."""
     if is_blank(v):
         return None
     if isinstance(v, (datetime, date)):
         return v.month
     m = _MONTH_LABEL.match(str(v))
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    return _MONTH_NAMES.get(str(v).strip().lower().rstrip("."))
 
 
 def platform_from_order_id(order_id: str | None) -> str | None:

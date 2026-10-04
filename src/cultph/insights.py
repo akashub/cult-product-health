@@ -83,7 +83,7 @@ def load_inputs(amazon_db: Path, live_db: Path, cfg, run_log: list[dict] | None 
     labels = _read(amazon_db, "SELECT review_id, codes, severity, status, human_verdict, human_codes, issues "
                               "FROM review_label")
     snaps = _read(amazon_db, "SELECT * FROM rating_snapshot")
-    approved = _read(live_db, "SELECT product, category, event_date, month, issue, mode FROM approved")
+    approved = _read(live_db, "SELECT product, category, event_date, month, issue, mode, order_id FROM approved")
     last_sync = next((r["at"] for r in (run_log or []) if r.get("published")), None)
     return Inputs(reviews, labels, snaps, approved, shown, effective_target(shown, amz.get("target_mode", "displayed")),
                   last_sync, has_ai_key)
@@ -396,29 +396,51 @@ def build_insights(inp: Inputs, today: date) -> list[Insight]:
                            f"Snapshots since {ch['since'].min():%d %b}; 14-day comparisons start "
                            f"{ch['since'].min() + timedelta(days=WINDOW):%d %b}.", "Ratings & reviews", None, "collecting"))
 
-    # 7. returns (sheet data: last month vs the 3 before)
+    # 7. returns (sheet data): latest month vs the 3 before, as per-day rates so a partial month compares fairly
     if not inp.approved.empty:
-        a = inp.approved.dropna(subset=["product"])
+        a = inp.approved.dropna(subset=["product"]).copy()
+        a["d"] = pd.to_datetime(a["event_date"], format="ISO8601")
         months = sorted(a["month"].unique())
         if len(months) >= 4:
             last, base = months[-1], months[-4:-1]
+            last_day = a.loc[a["month"] == last, "d"].max()
+            days_in = {m: pd.Period(m).days_in_month for m in months}
+            covered = int(last_day.day)
+            partial = covered < days_in[last]
             per = a.groupby(["product", "month"]).size().unstack(fill_value=0)
             spikes = []
             for prod, row in per.iterrows():
-                avg = row[base].mean()
-                if row[last] >= 10 and row[last] >= 1.5 * max(avg, 1):
+                base_rate = sum(row[m] / days_in[m] for m in base) / len(base)
+                rate = row[last] / covered
+                if row[last] >= 10 and rate >= 1.5 * max(base_rate, 1 / 30):
                     spikes.append({"product": prod, f"returns {last}": int(row[last]),
-                                   f"avg/month {base[0]}–{base[-1]}": round(avg, 1),
-                                   "× usual": round(row[last] / max(avg, 1), 1)})
+                                   "per day now": round(rate, 2), "per day before": round(base_rate, 2),
+                                   "× usual": round(rate / max(base_rate, 1 / 30), 1)})
+            span = f"{last} (1–{covered}, partial)" if partial else last
             if spikes:
-                ev = pd.DataFrame(spikes).sort_values(f"returns {last}", ascending=False)
-                worst = "; ".join(f"{r['product']} {r[f'returns {last}']} vs {r[f'avg/month {base[0]}–{base[-1]}']:.0f}/mo"
-                                  for r in ev.head(3).to_dict("records"))
-                out.append(Insight("watch", f"Return spikes in {last} · {len(ev)} product(s)",
-                                   f"Approved returns + exchanges at 1.5× or more their usual monthly level: {worst}. "
-                                   f"(Returns data runs through {last}.)",
+                ev = pd.DataFrame(spikes).sort_values("× usual", ascending=False)
+                worst = "; ".join(f"{r['product']} {r['× usual']}×" for r in ev.head(3).to_dict("records"))
+                out.append(Insight("watch", f"Return spikes · {len(ev)} product(s)",
+                                   f"Approved returns + exchanges per day in {span} vs the average of {base[0]}–{base[-1]}: "
+                                   f"{worst}. Returns data runs through {last_day:%d %b}.",
                                    "Returns & exchanges → filter product and month", ev, "returns",
-                                   str(len(ev)), f"products · {last}"))
+                                   str(len(ev)), "products spiking"))
+
+        # repeat claims: the same order approved again on a later date (a replacement failing too)
+        if "order_id" in a:
+            o = a.dropna(subset=["order_id"])
+            rep = o.groupby("order_id").agg(n=("d", "size"), first=("d", "min"), last=("d", "max"), product=("product", "first"))
+            rep = rep[(rep["n"] > 1) & (rep["last"].dt.date != rep["first"].dt.date)]
+            if len(rep) >= 5:
+                rep["days apart"] = (rep["last"] - rep["first"]).dt.days
+                by_prod = rep.groupby("product").size().sort_values(ascending=False)
+                ev = rep.reset_index()[["order_id", "product", "n", "first", "last", "days apart"]] \
+                    .sort_values("last", ascending=False)
+                out.append(Insight("watch", f"Repeat claims · {len(rep)} orders came back again",
+                                   f"Same order approved again {int(rep['days apart'].median())} days later (median) — "
+                                   f"often a replacement failing too. Most: "
+                                   + ", ".join(f"{p} ({n})" for p, n in by_prod.head(3).items()) + ".",
+                                   "Returns & exchanges → search the order id", ev, "repeat", str(len(rep)), "repeat orders"))
 
     # 8. data health
     if inp.last_sync_at:

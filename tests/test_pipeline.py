@@ -133,3 +133,40 @@ def test_judge_fails_when_returns_exceed_sales(run):
     res.tables["sales"].loc[:, "units"] = 0.5
     checks = {c["check"]: c for c in run_checks(res, cfg, src)}
     assert checks["return_pct_le_100"]["status"] == "fail"
+
+
+def test_upload_import_deletes_temp_file_and_publishes(tmp_path, monkeypatch):
+    import glob
+    import tempfile
+
+    import cultph.db as db
+    from cultph.pipeline import import_upload, sheet_id_from_url
+
+    monkeypatch.setattr(db, "LIVE_DB", tmp_path / "live.db")
+    monkeypatch.setattr(db, "STAGING_DB", tmp_path / "staging.db")
+    monkeypatch.setattr(db, "RUN_LOG", tmp_path / "runs.jsonl")
+    wb = tmp_path / "s.xlsx"
+    build(wb)
+    before = set(glob.glob(f"{tempfile.gettempdir()}/*.xlsx"))
+    r = import_upload(wb.read_bytes(), "s.xlsx", load_config(ROOT / "config.example.yaml"))
+    assert r["published"] and r["status"] != "fail" and r["rows"]["approved"] == 4
+    assert set(glob.glob(f"{tempfile.gettempdir()}/*.xlsx")) == before      # temp copy removed
+    assert sheet_id_from_url("https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit#gid=0") \
+        == "1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+    assert sheet_id_from_url("not a url") is None
+
+
+def test_tabs_found_by_headers_not_names(tmp_path):
+    import openpyxl
+    wb_path = tmp_path / "renamed.xlsx"
+    build(wb_path)
+    wb = openpyxl.load_workbook(wb_path)
+    for ws in wb.worksheets:
+        ws.title = ws.title + " - 1"          # e.g. "Approved - 1": names change, headers don't
+    wb.save(wb_path)
+    cfg = load_config(ROOT / "config.example.yaml")
+    for spec in cfg.raw["tabs"].values():
+        spec.pop("name", None)
+    res = ingest(XlsxSource(wb_path), cfg)
+    assert not res.header_errors and res.source_rows["approved"] == 4
+    assert res.tab_map["approved"] == "Approved - 1"

@@ -130,9 +130,9 @@ st.markdown(header("Cult Product Health",
                        if AMAZON_DB.exists() else None)),
             unsafe_allow_html=True)
 
-tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq = st.tabs(
+tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq, tab_src = st.tabs(
     ["Overview", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
-     "Pending verification", "Warehouse returns", "Data quality"])
+     "Pending verification", "Warehouse returns", "Data quality", "Data sources"])
 
 with tab_alerts:
     has_alerts = AMAZON_DB.exists() and sqlite3.connect(AMAZON_DB).execute(
@@ -653,3 +653,72 @@ with tab_dq:
                               index=["not named", "total"]), width="stretch")
     st.subheader("Rejected rows")
     st.dataframe(load("rejects"), hide_index=True, width="stretch")
+
+with tab_src:
+    from cultph.config import DATA_DIR as _DATA_DIR
+    from cultph.pipeline import (explain_google_error, import_upload, save_default_source, sheet_id_from_url,
+                                 sync_from)
+
+    def show_result(r: dict):
+        if r["published"]:
+            st.success(f"Imported · verdict {r['status'].upper()} · the dashboard now shows this data.")
+        else:
+            st.error("Not imported: a data check failed, so the previous data stays live. See the failing checks below.")
+        st.markdown("**Tabs recognised** (matched by their column headers)")
+        st.dataframe(pd.DataFrame([{"layout": k, "tab": v} for k, v in r["tabs"].items()]), hide_index=True)
+        st.markdown("**Rows read:** " + ", ".join(f"{k} {v:,}" for k, v in r["rows"].items()))
+        ck = pd.DataFrame(r["checks"])[["check", "status", "detail"]]
+        st.dataframe(ck.sort_values("status", key=lambda s: s.map({"fail": 0, "warn": 1, "pass": 2})),
+                     hide_index=True, width="stretch")
+        st.cache_data.clear()
+
+    cfg_now = load_config()
+    src = cfg_now.source
+    st.markdown(section("Data sources", "where the returns, exchanges and tickets come from"), unsafe_allow_html=True)
+    st.caption(f"Current source for scheduled syncs: **{src.get('type')}** · "
+               f"{src.get('spreadsheet_id') or src.get('path')}")
+
+    up, gs = st.columns(2, gap="medium")
+    with up, st.container(key="panel_upload"):
+        st.markdown("#### Upload a workbook")
+        st.caption("Works with any version of the returns sheet (.xlsx). In Google Sheets: File → Download → "
+                   "Microsoft Excel. Tabs are recognised by their columns, so renamed tabs are fine. The file is read "
+                   "and then deleted; only the parsed rows are kept (no customer emails).")
+        f = st.file_uploader("Workbook", type=["xlsx"], label_visibility="collapsed")
+        if f is not None and st.button("Check & import", type="primary", key="do_upload"):
+            with st.spinner("Reading and checking every row…"):
+                try:
+                    show_result(import_upload(f.getvalue(), f.name, cfg_now))
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Couldn't read that file: {e}")
+
+    with gs, st.container(key="panel_gsheet"):
+        st.markdown("#### Import from Google Sheets")
+        st.caption("Sign in with the Gmail the sheet is shared with (your Cult account). The first time, a Google "
+                   "window opens; the sign-in is then remembered on this computer.")
+        has_client = (_DATA_DIR / "google_client.json").exists() or (_DATA_DIR / "google_service_account.json").exists()
+        if not has_client:
+            st.warning("Google sign-in isn't set up on this computer yet: save the OAuth client file as "
+                       "`data/google_client.json` (SETUP.md → Google Sheets). Until then, use the upload.")
+        url = st.text_input("Sheet link", placeholder="https://docs.google.com/spreadsheets/d/…", disabled=not has_client)
+        keep = st.checkbox("Use this sheet for scheduled syncs", value=True, disabled=not has_client)
+        if st.button("Sign in & import", type="primary", disabled=not (has_client and url), key="do_gsheet"):
+            sid = sheet_id_from_url(url)
+            if not sid:
+                st.error("That doesn't look like a Google Sheets link.")
+            else:
+                from cultph.sources import GSheetSource
+
+                with st.spinner("Opening the sheet with your Google account…"):
+                    try:
+                        source = GSheetSource(sid, src.get("auth", "oauth"))
+                        r = sync_from(source, cfg_now, f"gsheet:{sid}")
+                    except Exception as e:  # noqa: BLE001
+                        st.error(explain_google_error(e))
+                    else:
+                        show_result(r)
+                        if keep and r["published"]:
+                            save_default_source({"type": "gsheet", "spreadsheet_id": sid,
+                                                 "auth": src.get("auth", "oauth")})
+                            st.info("Scheduled syncs now read this sheet.")
+
