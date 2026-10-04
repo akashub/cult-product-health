@@ -114,6 +114,16 @@ def bought_estimate(text: str | None) -> int | None:
     return int(float(m.group(1)) * mult)
 
 
+def amazon_image(soup) -> str | None:
+    """Main product image, normalised to a stable 500px URL (drops the experiment path segment)."""
+    img = soup.select_one("#landingImage") or soup.select_one("#imgBlkFront")
+    url = (img.get("data-old-hires") or img.get("src")) if img else None
+    if not url or not url.startswith("http"):
+        return None
+    m = re.search(r"/images/I/([A-Za-z0-9+%-]+)\.", url)
+    return f"https://m.media-amazon.com/images/I/{m.group(1)}._SL500_.jpg" if m else url
+
+
 def parse_performance(soup) -> dict:
     """Product-page performance signals: sales proxy, rank, price, stock, Amazon's review summary."""
     text = soup.get_text(" ", strip=True)
@@ -149,7 +159,7 @@ def parse_performance(soup) -> dict:
         "bsr_sub": ranks[1][0] if len(ranks) > 1 else None, "bsr_sub_cat": ranks[1][1] if len(ranks) > 1 else None,
         "price": price, "mrp": mrp if mrp and price and mrp >= price else None,
         "availability": avail.split(".")[0] if avail else None,
-        "customers_say": summary, "aspects": aspects,
+        "customers_say": summary, "aspects": aspects, "image_url": amazon_image(soup),
     }
 
 

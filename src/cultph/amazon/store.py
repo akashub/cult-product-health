@@ -41,10 +41,11 @@ MIGRATIONS = [
     ("rating_snapshot", "price", "REAL"), ("rating_snapshot", "mrp", "REAL"),
     ("rating_snapshot", "availability", "TEXT"), ("rating_snapshot", "customers_say", "TEXT"),
     ("rating_snapshot", "aspects", "TEXT"),
+    ("rating_snapshot", "image_url", "TEXT"),
 ]
 
 PERF_COLS = ["bought_text", "bought_min", "bsr_main", "bsr_main_cat", "bsr_sub", "bsr_sub_cat", "price", "mrp",
-             "availability", "customers_say", "aspects"]
+             "availability", "customers_say", "aspects", "image_url"]
 
 
 def _perf_values(perf: dict | None) -> list:
@@ -78,7 +79,7 @@ def add_snapshot(con, asin: str, product: str, parsed: dict) -> None:
 
 
 def add_count_snapshot(con, listing_id: str, product: str, platform: str, displayed: float | None,
-                       counts: dict[int, int], price: float | None = None) -> None:
+                       counts: dict[int, int], price: float | None = None, image_url: str | None = None) -> None:
     """Snapshot for platforms that show exact per-star counts (Flipkart)."""
     n = sum(counts.values())
     exact = sum(k * v for k, v in counts.items()) / n if n else None
@@ -88,10 +89,10 @@ def add_count_snapshot(con, listing_id: str, product: str, platform: str, displa
     pct = {k: round(100 * v / n) if n else 0 for k, v in counts.items()}
     con.execute(
         "INSERT INTO rating_snapshot (asin, parent_asin, product, captured_at, avg_rating, total_ratings, "
-        "p5, p4, p3, p2, p1, hist_avg_min, hist_avg_max, platform, c5, c4, c3, c2, c1, price) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "p5, p4, p3, p2, p1, hist_avg_min, hist_avg_max, platform, c5, c4, c3, c2, c1, price, image_url) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (listing_id, listing_id, product, now(), displayed, n, pct[5], pct[4], pct[3], pct[2], pct[1],
-         exact, exact, platform, counts[5], counts[4], counts[3], counts[2], counts[1], price))
+         exact, exact, platform, counts[5], counts[4], counts[3], counts[2], counts[1], price, image_url))
 
 
 def upsert_reviews(con, asin: str, product: str, reviews: list[dict], source: str,

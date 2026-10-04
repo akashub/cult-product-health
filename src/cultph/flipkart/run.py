@@ -69,7 +69,7 @@ def poll_listing(f, con, url: str, product: str, summary: RunSummary, max_pages:
                 summary.problems.append(f"flipkart {product}: " + "; ".join(errs))
                 return
             store.add_count_snapshot(con, pid, product, "flipkart", prod.get("avg_rating"), rp["star_counts"],
-                                     prod.get("price"))
+                                     prod.get("price"), prod.get("image_url"))
             summary.snapshots += 1
             if (rp["total_reviews"] or 0) >= 10 and len(rp["reviews"]) < 5:
                 # star counts are fine, but the review list didn't render fully: say so loudly

@@ -44,30 +44,26 @@ A browser window opens. Sign in, **preferably with a secondary Amazon account**,
 
 Without this, Amazon only shows about 8 "top reviews" per product. Ratings and the 4.1 calculator still work. Flipkart doesn't need a login.
 
-## 4. Google Sheets (read the return and exchange sheets directly)
+## 4. Getting the returns data in (two ways)
 
-The tool can also read a local `.xlsx` export (`source.type: xlsx` in the config). To read the live Google Sheets instead, pick **one** of these options.
+Open the dashboard (`uv run streamlit run app/dashboard.py`) and go to the **Data sources** tab.
 
-### Option A: sign in with Gmail (OAuth)
-1. At console.cloud.google.com, create a project, then enable the **Google Sheets API** and the **Google Drive API**.
-2. Go to **OAuth consent screen**, choose *External*, and add your Gmail address as a test user.
-   - ⚠️ While the app is in **Testing** mode, Google makes the sign-in expire every **7 days**. To avoid signing in again every week, click **Publish app** (switch it to *In production*). You'll see an "unverified app" warning during sign-in, which is fine for personal use.
-3. Go to **Credentials → Create credentials → OAuth client ID → Desktop app**. Download the JSON and save it as `data/google_client.json`.
-4. Run `uv run cultph sheets`. A browser opens for the Gmail sign-in, then it lists the sheets you can access.
-5. In `config.private.yaml`, set:
-   ```yaml
-   source:
-     type: gsheet
-     spreadsheet_id: "<id from the list>"
-     auth: oauth
-   ```
+**A. Upload a workbook (always works).** In Google Sheets choose File → Download → Microsoft Excel (.xlsx), then drop the file in "Upload a workbook" and click **Check & import**.
+- Every row is checked before anything is shown.
+- Tabs are recognised by their columns, so renamed tabs or a new layout next to the old one are fine.
+- The file is read and then deleted. Customer emails are never stored.
 
-### Option B: service account (never expires; best for scheduled runs)
-1. In the same Cloud project, go to **IAM → Service accounts → Create**. Then **Keys → Add key → JSON**, and save it as `data/google_service_account.json`.
-2. Share each sheet with the service account's email (`…@….iam.gserviceaccount.com`) as a *Viewer*.
-3. Set `auth: service_account` in `config.private.yaml`.
+**B. Import straight from Google Sheets with your Cult Gmail.**
+1. One-time setup on this computer:
+   - At console.cloud.google.com, create a project and enable the **Google Sheets API** and the **Google Drive API**.
+   - Configure the OAuth consent screen: choose *External*, add your Cult Gmail as a test user, then click **Publish app**. Publishing stops Google from expiring the sign-in every 7 days; you'll see an "unverified app" warning, which is fine for personal use.
+   - Under Credentials → Create credentials → OAuth client ID, choose **Desktop app**. Download the JSON and save it as `data/google_client.json`.
+2. In **Data sources → Import from Google Sheets**, paste the sheet link and click **Sign in & import**. A Google window opens the first time; sign in with the Cult account the sheet is shared with. The sign-in is remembered on this computer.
+3. Leave **Use this sheet for scheduled syncs** ticked, and `cultph run` / `cultph watch` will then read that sheet automatically.
 
-If the Google Sheet's tab or column names differ from the xlsx, adjust the `tabs:` section of the config. `cultph sync` tells you exactly which column it couldn't find.
+> If Google says *"Access blocked"* or *"admin policy"*, Cult's Workspace admin doesn't allow outside apps to read company Sheets. Use option A (upload) instead, or ask IT to allow the app.
+
+You can also do this from the terminal: `uv run cultph sheets` lists the sheets your account can see, and `uv run cultph sync` imports the configured one.
 
 ## 5. Check everything for real
 
@@ -91,7 +87,7 @@ The first `run` records an alerts baseline and sends nothing. After that, only n
 - **macOS, in the background:** `uv run cultph schedule --every 60` writes a launchd file and prints the one command that turns it on (and the one that turns it off).
 - Either way, runs happen only while the computer is awake.
 
-### Open the dashboard from your phone
+### Open the dashboard from your phone (optional)
 1. Set `DASHBOARD_PASSWORD` (step 2).
 2. Install **Tailscale** on the computer and the phone, and sign in to both with the same account.
 3. Run `uv run streamlit run app/dashboard.py --server.address 0.0.0.0`.

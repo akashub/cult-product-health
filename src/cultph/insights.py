@@ -116,7 +116,7 @@ def pool_labels(latest: pd.DataFrame) -> dict[str, str]:
 
 def unbiased_reviews(reviews: pd.DataFrame, labels_by_pool: dict[str, str]) -> pd.DataFrame:
     if reviews.empty:
-        return reviews.assign(unit=[], day=[])
+        return reviews.assign(pool=[], unit=[], day=[])
     r = reviews.copy()
     r["platform"] = r["platform"].fillna("amazon")
     src = r["source"].fillna("")

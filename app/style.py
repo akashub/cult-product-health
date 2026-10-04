@@ -73,6 +73,43 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 .cph-chips { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
 .cph-chips span { background:#EEF2FF; color:#3730A3; border-radius:999px; padding:3px 10px; font-size:.75rem; font-weight:500; }
 [data-testid="stSidebar"] { background:#FFFFFF; border-right:1px solid #E5E7EB; }
+
+/* product tiles */
+[class*="st-key-tile_"] { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:16px; padding:12px 12px 8px 12px;
+                          box-shadow:0 1px 2px rgba(16,24,40,.04); transition: box-shadow .15s ease, transform .15s ease; gap:4px; }
+[class*="st-key-tile_"]:hover { box-shadow:0 8px 24px rgba(16,24,40,.10); transform: translateY(-2px); }
+[class*="st-key-tile_"] [data-testid="stButton"] { margin-top:auto; }
+[class*="st-key-tile_"] button { width:100%; border-radius:10px; font-size:.82rem; padding:4px 0; min-height:0;
+                                 background:#EEF2FF; color:#3730A3; border:1px solid #E0E7FF; font-weight:600; }
+[class*="st-key-tile_"] button:hover { background:#E0E7FF; color:#312E81; border-color:#C7D2FE; }
+.pt-img { height:150px; flex-shrink:0; border-radius:12px; background:#F9FAFB; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; }
+.pt-img img { max-height:140px; max-width:100%; object-fit:contain; mix-blend-mode:multiply; }
+.pt-ph { font-size:2rem; font-weight:800; color:#C7D2FE; }
+.pt-score { position:absolute; top:8px; right:8px; border-radius:999px; padding:3px 9px; font-size:.78rem; font-weight:800; color:#fff; }
+.pt-name { font-weight:700; color:#111827; font-size:.92rem; margin-top:8px; line-height:1.25; min-height:2.3em; }
+.pt-row { display:flex; align-items:baseline; justify-content:space-between; gap:6px; margin-top:4px; }
+.pt-rating { font-size:1.35rem; font-weight:800; color:#111827; }
+.pt-delta { font-size:.8rem; font-weight:700; border-radius:6px; padding:1px 6px; }
+.pt-meta { font-size:.74rem; color:#6B7280; margin-top:2px; }
+.pt-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.pt-chips span { background:#F3F4F6; color:#374151; border-radius:999px; padding:2px 8px; font-size:.7rem; }
+
+/* ticker strip */
+.tk { display:flex; gap:10px; overflow-x:auto; padding:2px 2px 8px 2px; }
+.tk .i { flex:0 0 auto; background:#FFFFFF; border:1px solid #E5E7EB; border-radius:12px; padding:8px 12px; display:flex; gap:10px; align-items:center; }
+.tk .n { font-weight:700; font-size:.85rem; color:#111827; white-space:nowrap; }
+.tk .v { font-weight:800; font-size:.85rem; }
+
+/* product detail */
+.pd-hero { display:flex; gap:20px; align-items:center; }
+.pd-hero .img { width:180px; height:180px; border-radius:16px; background:#F9FAFB; display:flex; align-items:center; justify-content:center; }
+.pd-hero .img img { max-width:170px; max-height:170px; object-fit:contain; mix-blend-mode:multiply; }
+.pd-name { font-size:1.6rem; font-weight:800; color:#111827; letter-spacing:-0.02em; }
+.pd-gauge { width:120px; height:120px; }
+.sig { margin:6px 0; }
+.sig .top { display:flex; justify-content:space-between; font-size:.82rem; color:#374151; }
+.sig .bar { height:8px; background:#F3F4F6; border-radius:999px; overflow:hidden; margin-top:3px; }
+.sig .bar div { height:100%; border-radius:999px; }
 .cph-status { display:flex; align-items:center; gap:8px; font-weight:600; font-size:.9rem; margin: 4px 0 2px 0; }
 .cph-status .b { border-radius:999px; padding:3px 10px; font-size:.75rem; font-weight:700; }
 </style>
@@ -131,3 +168,106 @@ def card(ins) -> str:
 def quote(text: str, chips: list[str] | None = None) -> str:
     chip_html = "".join(f"<span>{e(c)}</span>" for c in (chips or []))
     return f'<div class="cph-quote">{e(text)}</div>' + (f'<div class="cph-chips">{chip_html}</div>' if chip_html else "")
+
+
+GRADE_COLOR = {"Healthy": "#059669", "Watch": "#D97706", "At risk": "#DC2626", "n/a": "#9CA3AF"}
+
+
+def score_color(score) -> str:
+    if score is None:
+        return GRADE_COLOR["n/a"]
+    return GRADE_COLOR["Healthy"] if score >= 75 else GRADE_COLOR["Watch"] if score >= 55 else GRADE_COLOR["At risk"]
+
+
+def sparkline(values: list[float], width: int = 220, height: int = 40, lo: float = 1.0, hi: float = 5.0) -> str:
+    """Inline SVG line of bi-weekly average stars (scale 1-5), with a 4.1 reference line."""
+    if len(values) < 2:
+        return f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}"></svg>'
+    def y(v):
+        return height - 4 - (max(lo, min(hi, v)) - lo) / (hi - lo) * (height - 8)
+    step = (width - 8) / (len(values) - 1)
+    pts = " ".join(f"{4 + i * step:.1f},{y(v):.1f}" for i, v in enumerate(values))
+    color = "#059669" if values[-1] >= values[0] else "#DC2626"
+    area = f"4,{height} " + pts + f" {4 + (len(values) - 1) * step:.1f},{height}"
+    return (f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" preserveAspectRatio="none">'
+            f'<polygon points="{area}" fill="{color}" opacity="0.08"/>'
+            f'<line x1="0" x2="{width}" y1="{y(4.1):.1f}" y2="{y(4.1):.1f}" stroke="#9CA3AF" stroke-dasharray="3,3" stroke-width="1"/>'
+            f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2.2" stroke-linejoin="round"/>'
+            f'<circle cx="{4 + (len(values) - 1) * step:.1f}" cy="{y(values[-1]):.1f}" r="3" fill="{color}"/></svg>')
+
+
+def _img(url, name, cls="pt-img"):
+    initials = "".join(w[0] for w in str(name).replace("Cult ", "").split()[:2]).upper()
+    inner = f'<img src="{e(url)}" alt="{e(name)}" loading="lazy" referrerpolicy="no-referrer">' if url \
+        else f'<div class="pt-ph">{e(initials)}</div>'
+    return inner
+
+
+def product_tile(c) -> str:
+    sc = "–" if c.score is None else f"{int(c.score)}"
+    delta = ""
+    if c.delta_stars is not None:
+        up = c.delta_stars >= 0
+        delta = (f'<span class="pt-delta" style="background:{"#ECFDF5" if up else "#FEF2F2"};'
+                 f'color:{"#047857" if up else "#B91C1C"}">{"▲" if up else "▼"} {abs(c.delta_stars):.2f}★</span>')
+    chips = "".join(f"<span>{e(pl.title())} {r}★ · {n:,}</span>" for pl, (r, n) in sorted(c.platform_ratings.items()))
+    meta = []
+    if c.new_reviews_14d:
+        meta.append(f"{c.new_reviews_14d} new reviews/14d")
+    if c.returns_ratio is not None:
+        meta.append(f"returns {c.returns_ratio:.1f}× usual")
+    if c.safety_90d:
+        meta.append(f"⚠ {c.safety_90d} safety")
+    rating = f"{c.rating}★" if c.rating is not None else "—"
+    return (f'<div style="padding-bottom:10px"><div class="pt-img">{_img(c.image_url, c.product)}'
+            f'<div class="pt-score" style="background:{score_color(c.score)}">{sc}</div></div>'
+            f'<div class="pt-name">{e(c.product)}</div>'
+            f'<div class="pt-row"><span class="pt-rating">{rating}</span>{delta}</div>'
+            f'{sparkline([v for _, v, _ in c.series])}'
+            f'<div class="pt-meta">{e(" · ".join(meta)) or "&nbsp;"}</div>'
+            f'<div class="pt-chips">{chips}</div></div>')
+
+
+def ticker(items: list[tuple[str, float]]) -> str:
+    cells = []
+    for name, d in items:
+        up = d >= 0
+        cells.append(f'<div class="i"><span class="n">{e(name)}</span><span class="v" style="color:'
+                     f'{"#059669" if up else "#DC2626"}">{"▲" if up else "▼"} {abs(d):.2f}★</span></div>')
+    return f'<div class="tk">{"".join(cells)}</div>'
+
+
+def gauge(score) -> str:
+    color = score_color(score)
+    pct = 0 if score is None else max(0, min(100, score))
+    r, circ = 48, 2 * 3.14159 * 48
+    return (f'<svg class="pd-gauge" viewBox="0 0 120 120"><circle cx="60" cy="60" r="{r}" fill="none" stroke="#F3F4F6" stroke-width="12"/>'
+            f'<circle cx="60" cy="60" r="{r}" fill="none" stroke="{color}" stroke-width="12" stroke-linecap="round" '
+            f'stroke-dasharray="{circ * pct / 100:.1f} {circ:.1f}" transform="rotate(-90 60 60)"/>'
+            f'<text x="60" y="66" text-anchor="middle" font-size="28" font-weight="800" fill="#111827">'
+            f'{"–" if score is None else int(score)}</text></svg>')
+
+
+def product_hero(c, links_html: str) -> str:
+    chips = "".join(f"<span>{e(pl.title())} {r}★ · {n:,} ratings</span>" for pl, (r, n) in sorted(c.platform_ratings.items()))
+    return (f'<div class="pd-hero"><div class="img">{_img(c.image_url, c.product)}</div>'
+            f'<div style="flex:1"><div class="pd-name">{e(c.product)}</div>'
+            f'<div style="color:#6B7280;margin-top:2px">{e(c.category.title())} · health '
+            f'<b style="color:{score_color(c.score)}">{e(c.grade)}</b> · based on {len(c.signals)} of 5 signals</div>'
+            f'<div class="pt-chips" style="margin-top:10px">{chips}</div>'
+            f'<div style="margin-top:10px;font-size:.85rem">{links_html}</div></div>'
+            f'<div>{gauge(c.score)}</div></div>')
+
+
+def signal_bars(signals: dict, labels: dict, weights: dict) -> str:
+    rows = []
+    for k in ("rating", "recent", "negative", "safety", "returns"):
+        if k in signals:
+            v, why = signals[k]
+            rows.append(f'<div class="sig"><div class="top"><span><b>{e(labels[k])}</b> · {e(why)}</span>'
+                        f'<span>{int(v)} · weight {int(weights[k] * 100)}%</span></div>'
+                        f'<div class="bar"><div style="width:{v}%;background:{score_color(v)}"></div></div></div>')
+        else:
+            rows.append(f'<div class="sig"><div class="top" style="color:#9CA3AF"><span>{e(labels[k])}</span>'
+                        f'<span>not enough data</span></div></div>')
+    return "".join(rows)

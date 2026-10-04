@@ -130,9 +130,9 @@ st.markdown(header("Cult Product Health",
                        if AMAZON_DB.exists() else None)),
             unsafe_allow_html=True)
 
-tab_over, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq, tab_src = st.tabs(
-    ["Overview", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges", "Support tickets",
-     "Pending verification", "Warehouse returns", "Data quality", "Data sources"])
+tab_over, tab_prod, tab_alerts, tab_amz, tab_iss, tab_ret, tab_tix, tab_pend, tab_wms, tab_dq, tab_src = st.tabs(
+    ["Overview", "Products", "Alerts", "Ratings & reviews", "Review issues (AI)", "Returns & exchanges",
+     "Support tickets", "Pending verification", "Warehouse returns", "Data quality", "Data sources"])
 
 with tab_alerts:
     has_alerts = AMAZON_DB.exists() and sqlite3.connect(AMAZON_DB).execute(
@@ -721,4 +721,161 @@ with tab_src:
                             save_default_source({"type": "gsheet", "spreadsheet_id": sid,
                                                  "auth": src.get("auth", "oauth")})
                             st.info("Scheduled syncs now read this sheet.")
+
+with tab_prod:
+    import datetime as _dt2
+
+    import altair as alt
+    from cultph.config import env as _env2
+    from cultph.insights import load_inputs as _load_inputs, latest_snapshots as _latest, pool_labels as _pool_labels, \
+        unbiased_reviews as _unbiased, final_labels as _final_labels
+    from cultph.products import LABELS as SIG_LABELS, WEIGHTS as SIG_WEIGHTS, build_board, movers
+    from style import gauge, product_hero, product_tile, signal_bars, ticker
+
+    @st.cache_data(ttl=300, show_spinner="Scoring products…")
+    def products_data(today: _dt2.date):
+        cfg = load_config()
+        inp = _load_inputs(AMAZON_DB, LIVE_DB, cfg, last_runs(50))
+        lat = _latest(inp.snaps)
+        names = _pool_labels(lat) if not lat.empty else {}
+        return build_board(inp, today, cfg.category_of()), inp, _unbiased(inp.reviews, names)
+
+    today2 = _dt2.date.today()
+    cards, pinp, punb = products_data(today2)
+    sel = st.session_state.get("sel_product")
+
+    if sel:
+        c = next((x for x in cards if x.product == sel), None)
+        if st.button("← All products", key="back_products"):
+            st.session_state.pop("sel_product", None)
+            st.rerun()
+        if c:
+            links = []
+            for l in c.listings:
+                if l["platform"] == "amazon":
+                    links.append(f'<a href="https://www.amazon.in/dp/{l["id"]}" target="_blank">Amazon · {l["id"]}</a>')
+                else:
+                    links.append(f'<a href="https://www.flipkart.com/search?q={c.product.replace(" ", "+")}" '
+                                 f'target="_blank">Flipkart · {l["id"]}</a>')
+            with st.container(key="panel_hero"):
+                st.markdown(product_hero(c, " · ".join(links)), unsafe_allow_html=True)
+            k = st.columns(5)
+            k[0].metric("Rating", f"{c.rating}★" if c.rating else "—", help=f"{c.platform.title()}, {c.ratings:,} ratings")
+            k[1].metric("New reviews (14d)", c.new_reviews_14d)
+            k[2].metric("Stars of new reviews", f"{c.series[-1][1]:.2f}★" if c.series else "—",
+                        f"{c.delta_stars:+.2f} vs prev 14d" if c.delta_stars is not None else None)
+            k[3].metric("Returns per day", f"{c.returns_per_day:.1f}" if c.returns_per_day is not None else "—",
+                        f"{c.returns_ratio:.1f}× usual" if c.returns_ratio is not None else None, delta_color="inverse")
+            k[4].metric("Safety mentions (90d)", c.safety_90d)
+
+            left, right = st.columns([2, 3], gap="medium")
+            with left, st.container(key="panel_signals"):
+                st.markdown("**How the health score is made**")
+                st.markdown(signal_bars(c.signals, SIG_LABELS, SIG_WEIGHTS), unsafe_allow_html=True)
+                st.caption("Score = weighted average of the signals available for this product (missing ones are left out).")
+            with right, st.container(key="panel_ratinghist"):
+                st.markdown("**Marketplace rating over time**")
+                sn = pinp.snaps[pinp.snaps["product"] == c.product].copy()
+                if len(sn):
+                    sn["platform"] = sn["platform"].fillna("amazon")
+                    sn["day"] = pd.to_datetime(sn["captured_at"]).dt.normalize()
+                    daily = sn.sort_values("captured_at").groupby(["platform", "asin", "day"]).tail(1)
+                    ch = alt.Chart(daily).mark_line(point=True, strokeWidth=2.5).encode(
+                        x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")),
+                        y=alt.Y("avg_rating:Q", title="rating", scale=alt.Scale(zero=False)),
+                        color=alt.Color("platform:N", scale=alt.Scale(domain=["amazon", "flipkart"], range=["#F59E0B", "#2563EB"])),
+                        detail="asin:N", tooltip=["platform", "asin", "day:T", "avg_rating", "total_ratings"])
+                    st.altair_chart(ch.properties(height=230).configure_view(strokeWidth=0).configure(background="#FFFFFF"),
+                                    use_container_width=True)
+                    st.caption("One point per day per listing (history starts when tracking began).")
+
+            a, b = st.columns(2, gap="medium")
+            with a, st.container(key="panel_p_reviews"):
+                st.markdown("**Stars of new reviews, per 14 days**")
+                if c.series:
+                    sdf = pd.DataFrame(c.series, columns=["window", "avg", "n"])
+                    base = alt.Chart(sdf).encode(x=alt.X("window:O", sort=sdf["window"].tolist(), title=None,
+                                                         axis=alt.Axis(labelAngle=0)))
+                    bars = base.mark_bar(color="#E0E7FF", size=30).encode(y=alt.Y("n:Q", title="reviews"))
+                    line = base.mark_line(color="#4F46E5", strokeWidth=3, point=True).encode(
+                        y=alt.Y("avg:Q", title="avg ★", scale=alt.Scale(domain=[1, 5])), tooltip=["window", "avg", "n"])
+                    st.altair_chart(alt.layer(bars, line).resolve_scale(y="independent").properties(height=230)
+                                    .configure_view(strokeWidth=0).configure(background="#FFFFFF"), use_container_width=True)
+                else:
+                    st.caption("Not enough recent reviews yet.")
+            with b, st.container(key="panel_p_returns"):
+                st.markdown("**Approved returns + exchanges per month** (shared sheet)")
+                ap = pinp.approved[pinp.approved["product"] == c.product] if not pinp.approved.empty else pd.DataFrame()
+                if len(ap):
+                    rm = ap.groupby(["month", "mode"]).size().rename("n").reset_index()
+                    ch = alt.Chart(rm).mark_bar(size=22).encode(
+                        x=alt.X("month:O", title=None, axis=alt.Axis(labelAngle=0)), y=alt.Y("n:Q", title="claims"),
+                        color=alt.Color("mode:N", scale=alt.Scale(domain=["Exchange", "Return"], range=["#818CF8", "#F87171"])),
+                        tooltip=["month", "mode", "n"])
+                    st.altair_chart(ch.properties(height=230).configure_view(strokeWidth=0).configure(background="#FFFFFF"),
+                                    use_container_width=True)
+                    top_iss = ap["issue"].value_counts().head(5)
+                    st.caption("Top return reasons: " + " · ".join(f"{i} ({n})" for i, n in top_iss.items()))
+                else:
+                    st.caption("No returns recorded for this product in the sheet.")
+
+            c1, c2 = st.columns([3, 2], gap="medium")
+            with c1, st.container(key="panel_p_lowreviews"):
+                st.markdown("**Latest unhappy reviews (≤2★)**")
+                rv = pinp.reviews[(pinp.reviews["product"] == c.product) & (pinp.reviews["rating"] <= 2)]
+                rv = rv.sort_values("review_date", ascending=False).head(8)
+                if len(rv):
+                    fl = _final_labels(pinp.labels)[["review_id", "final_codes"]] if not pinp.labels.empty else None
+                    if fl is not None:
+                        rv = rv.merge(fl, on="review_id", how="left")
+                    for r in rv.itertuples():
+                        codes = getattr(r, "final_codes", None)
+                        tag = f" · `{codes}`" if isinstance(codes, str) and codes else ""
+                        st.markdown(f"**{'★' * int(r.rating)}** {r.title or ''} · <span style='color:#6B7280'>"
+                                    f"{r.review_date} · {r.platform}</span>{tag}  \n{(r.body or '')[:280]}",
+                                    unsafe_allow_html=True)
+                else:
+                    st.caption("No 1–2★ reviews stored for this product.")
+            with c2, st.container(key="panel_p_summary"):
+                st.markdown("**Amazon's own summary**")
+                sn = pinp.snaps[(pinp.snaps["product"] == c.product)]
+                if "customers_say" in sn and sn["customers_say"].notna().any():
+                    r = sn[sn["customers_say"].notna()].sort_values("captured_at").iloc[-1]
+                    chips = [f"{a} · {n}" for a, n in json.loads(r["aspects"])] if r.get("aspects") else []
+                    st.markdown(quote(r["customers_say"], chips), unsafe_allow_html=True)
+                else:
+                    st.caption("Appears after the next Amazon poll for this product.")
+        else:
+            st.info("That product isn't in the data anymore.")
+    else:
+        up, down = movers(cards)
+        st.markdown(section("Products", f"{len(cards)} products · photos for "
+                                        f"{sum(1 for c in cards if c.image_url)} · health score 0–100"),
+                    unsafe_allow_html=True)
+        if up or down:
+            st.markdown(ticker([(c.product, c.delta_stars) for c in up + down]), unsafe_allow_html=True)
+            st.caption("Movers: change in the average stars of new reviews, last 14 days vs the 14 before (min 8 reviews each).")
+        f1, f2, f3 = st.columns([2, 2, 3])
+        sort_by = f1.selectbox("Sort", ["Health score (worst first)", "Health score (best first)", "Rating",
+                                        "Most ratings", "Name"], key="p_sort")
+        grade = f2.multiselect("Health", ["At risk", "Watch", "Healthy", "n/a"], key="p_grade")
+        q = f3.text_input("Search", placeholder="Search products", key="p_q", label_visibility="visible")
+        view = [c for c in cards if (cat == "All" or c.category == cat) and (not grade or c.grade in grade)
+                and (not q or q.lower() in c.product.lower())]
+        key_fn = {"Health score (worst first)": lambda c: (c.score is None, c.score or 0),
+                  "Health score (best first)": lambda c: (c.score is None, -(c.score or 0)),
+                  "Rating": lambda c: (c.rating is None, -(c.rating or 0)),
+                  "Most ratings": lambda c: -c.ratings, "Name": lambda c: c.product}[sort_by]
+        view.sort(key=key_fn)
+        per_row = 4
+        for start in range(0, len(view), per_row):
+            cols = st.columns(per_row, gap="small")
+            for col, c in zip(cols, view[start:start + per_row]):
+                with col, st.container(key=f"tile_{start}_{c.product.replace(' ', '_').replace('/', '_')}"):
+                    st.markdown(product_tile(c), unsafe_allow_html=True)
+                    if st.button("View details →", key=f"open_{c.product}", use_container_width=True):
+                        st.session_state["sel_product"] = c.product
+                        st.rerun()
+        st.caption("Health score: rating 35% · stars of new reviews 25% · 1–2★ share 15% · safety 10% · returns trend 15%. "
+                   "Products with no marketplace listing show “–”. Open a product for the full breakdown.")
 

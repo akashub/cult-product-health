@@ -38,6 +38,13 @@ This is being built for personal use, so it is deliberately simple.
 - Volume observed: about 160 new Flipkart reviews a month across the listings (Volt and Revive the busiest). The AI labeller is capped at `ai.max_per_run` reviews per run (default 200), taking the lowest ratings and newest first, so a backlog after a backfill clears over several runs.
 - Some listings occasionally render one review repeated. Repeats are de-duplicated, and if page 1 yields fewer than 5 distinct reviews while the header says 10 or more, the run warns and saves the page.
 
+### Returns data: now and later
+- **Now:** a workbook export (upload it in the dashboard), or a Google Sheet read with the user's own Google sign-in on their laptop (desktop OAuth, remembered on that machine). Tabs are matched by their columns, so a new layout next to an old one, or renamed tabs, are handled through config, not code.
+- **When Cult's permanent, live sheet exists:** the scheduled `cultph sync` reads it directly with the saved sign-in. If Cult's Workspace admin blocks outside apps, the alternatives are:
+  1. the admin allows this OAuth client;
+  2. the sheet is shared with a service account, if external sharing is allowed;
+  3. a small Apps Script inside Cult's Workspace pushes a CSV export on a timer.
+
 ### Phase status
 | Phase | Status |
 |---|---|

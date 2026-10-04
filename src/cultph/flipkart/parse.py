@@ -37,7 +37,11 @@ def parse_product(html: str) -> dict:
             if item.get("@type") == "Product":
                 agg = item.get("aggregateRating") or {}
                 offers = item.get("offers") or {}
-                out.update(title=item.get("name"), avg_rating=agg.get("ratingValue"),
+                imgs = item.get("image")
+                img = imgs[0] if isinstance(imgs, list) and imgs else imgs if isinstance(imgs, str) else None
+                if img:
+                    img = re.sub(r"/image/\d+/\d+/", "/image/416/416/", img)
+                out.update(title=item.get("name"), avg_rating=agg.get("ratingValue"), image_url=img,
                            total_ratings=agg.get("ratingCount"), total_reviews=agg.get("reviewCount"),
                            price=offers.get("price") if isinstance(offers, dict) else None)
     m = re.search(r'href="(/[^"?]*?/product-reviews/itm[0-9a-z]+)\?pid=(\w+)((?:&amp;|&)lid=(\w+))?', html)
