@@ -84,14 +84,18 @@ The first `run` records an alerts baseline and sends nothing. After that, only n
 
 ### Keep it running
 - **Any OS:** `uv run cultph watch --every 60` runs everything every hour while the terminal stays open.
-- **macOS, in the background:** `uv run cultph schedule --every 60` writes a launchd file and prints the one command that turns it on (and the one that turns it off).
+- **macOS, in the background:** `uv run cultph schedule --every 60` writes two launchd files, one for the hourly data refresh and one for the dashboard (always on, restarts if it stops). It prints the commands that turn them on and off.
 - Either way, runs happen only while the computer is awake.
 
 ### Open the dashboard from your phone (optional)
 1. Set `DASHBOARD_PASSWORD` (step 2).
-2. Install **Tailscale** on the computer and the phone, and sign in to both with the same account.
-3. Run `uv run streamlit run app/dashboard.py --server.address 0.0.0.0`.
-4. On the phone, open `http://<computer's Tailscale name>:8501`.
+2. Install **Tailscale** on the laptop and the phone, and sign in to both with the same account.
+3. On the laptop, keep the dashboard running (macOS: `uv run cultph schedule` installs it as an always-on service), then run:
+   ```bash
+   tailscale serve --bg 8501
+   ```
+   It prints an address like `https://<laptop-name>.<tailnet>.ts.net`. Open that on the phone. If asked, allow HTTPS certificates for your tailnet in the Tailscale admin console.
+4. To stop sharing: `tailscale serve off`.
 
 Don't expose it to the open internet, because it shows order IDs.
 

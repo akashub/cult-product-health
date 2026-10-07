@@ -267,10 +267,31 @@ def cmd_schedule(args) -> int:
   <key>StandardErrorPath</key><string>{DATA_DIR / "run.log"}</string>
 </dict></plist>
 """)
-    print(f"wrote {plist} (every {args.every} min). Not installed. To turn it on:")
-    print(f"  cp '{plist}' ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{label}.plist")
-    print(f"To turn it off:\n  launchctl bootout gui/$(id -u)/{label}")
-    print("It runs only while the Mac is awake.")
+    # the dashboard as an always-on service (localhost only; Tailscale Serve publishes it to your devices)
+    dlabel = "com.cultph.dashboard"
+    dplist = DATA_DIR / f"{dlabel}.plist"
+    dplist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>{dlabel}</string>
+  <key>ProgramArguments</key><array>
+    <string>{uv}</string><string>run</string><string>--project</string><string>{ROOT}</string>
+    <string>streamlit</string><string>run</string><string>{ROOT / "app" / "dashboard.py"}</string>
+    <string>--server.port</string><string>8501</string><string>--server.address</string><string>127.0.0.1</string>
+    <string>--server.headless</string><string>true</string></array>
+  <key>WorkingDirectory</key><string>{ROOT}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{DATA_DIR / "dashboard.log"}</string>
+  <key>StandardErrorPath</key><string>{DATA_DIR / "dashboard.log"}</string>
+</dict></plist>
+""")
+    print(f"wrote {plist} (data refresh every {args.every} min) and {dplist} (dashboard, always on).")
+    print("Not installed yet. To turn both on:")
+    for lb, pl in ((label, plist), (dlabel, dplist)):
+        print(f"  cp '{pl}' ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{lb}.plist")
+    print(f"To turn them off:\n  launchctl bootout gui/$(id -u)/{label}\n  launchctl bootout gui/$(id -u)/{dlabel}")
+    print("The dashboard is then at http://localhost:8501. Both run only while the Mac is awake.")
     return 0
 
 
